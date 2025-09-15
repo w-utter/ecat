@@ -1,0 +1,14 @@
+[package]
+name = "ecat"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+ethercrab = {git = "https://github.com/w-utter/ethercrab", branch = "io_uring-backend", features = ["raw-sockets"]}
+ethercrab-wire = {git = "https://github.com/w-utter/ethercrab", branch = "io_uring-backend"}
+slab = "0.4"
+io-uring = "0.7"
+io-uring-buf-ring = {git = "https://github.com/w-utter/io-uring-buf-ring"}
+libc = "0.2"
+
+heapless = "0.9"

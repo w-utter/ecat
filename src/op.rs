@@ -83,4 +83,8 @@ impl<const N: usize, T: Default> Op<N, T> {
         .map_err(|_| Error::Internal)?;
         Ok(())
     }
+
+    pub fn subdev_mut(&mut self, idx: usize) -> Option<&mut (SubDevice, T)> {
+        self.subdevices.get_mut(idx)
+    }
 }

@@ -39,7 +39,9 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
         ring: &mut IoUring,
     ) -> Result<(), Error> {
         let mut reset = crate::reset::Reset::new();
-        reset.start(maindevice, retry_count, timeout, tx_entries, sock, ring)
+        reset.start(maindevice, retry_count, timeout, tx_entries, sock, ring)?;
+        *self = Self::Reset(reset);
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]

@@ -4,4 +4,4 @@ ethercat maindevice completely driven using io_uring.
 
 initally based off of the io_uring driver in ethercrab
 
-the spin example will drive a motor in CSV according to ds204
+the spin example will drive a motor in CSV according to ds402

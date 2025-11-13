@@ -1,4 +1,7 @@
-use ecat::{InitState, PdoConfig, PdoMapping, PdoObject, SdoWrite, TxBuf, TxIndex};
+use ecat::{
+    InitState, PdoConfig, PdoMapping, PdoObject, SdoRead, SdoWrite, TxBuf, TxIndex,
+    user::ControlFlow,
+};
 use ethercrab::{PduHeader, SubDevice, error::Error, received_frame::ReceivedPdu};
 
 use ecat::io::{TIMEOUT_CLEAR_MASK, TIMEOUT_MASK, WRITE_MASK};
@@ -139,12 +142,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         res.identifier,
                         &mut pdi_offset,
                         |_| &config,
-                        |maindev, subdev, state, received, entries, ring, index, identifier| {
-                            let _ = state.update(
-                                received, maindev, retries, &timeout, entries, &sock, ring, subdev,
-                                index, identifier,
-                            );
-                            Ok(())
+                        |maindev,
+                         subdev,
+                         state,
+                         received,
+                         entries,
+                         ring,
+                         index,
+                         identifier,
+                         output_buf| {
+                            let flow = state
+                                .update(
+                                    received, maindev, retries, &timeout, entries, &sock, ring,
+                                    subdev, index, identifier, output_buf,
+                                )
+                                .unwrap();
+                            Ok(flow)
                         },
                     );
                 } else {
@@ -227,6 +240,7 @@ enum UserState {
     Idle,
     //Init(UserControlInit),
     Test(u32),
+    Error(SdoRead<u16>),
 }
 
 pub enum UserControlInitState {
@@ -249,6 +263,10 @@ struct RecvObj {
     velocity: i32,
     #[wire(bytes = 2)]
     torque: i16,
+}
+
+impl RecvObj {
+    const ERR_MASK: u16 = 0x08;
 }
 
 #[derive(Copy, Clone, ethercrab_wire::EtherCrabWireWrite)]
@@ -297,22 +315,23 @@ impl UserState {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut io_uring::IoUring,
-        _subdev: &mut SubDevice,
+        subdev: &mut SubDevice,
         idx: u16,
-        _identifier: Option<u8>,
-    ) -> Result<(), Error> {
+        identifier: Option<u8>,
+        output_buf: &mut [u8],
+    ) -> Result<Option<ControlFlow>, Error> {
         match self {
             Self::Idle => {
                 println!("attempting to start rx/tx");
-
-                let mut buf = [0; 20];
                 use ethercrab::EtherCrabWireWrite;
                 let write_obj = WriteObj::new(0x0080, 0, 9);
-                write_obj.pack_to_slice(&mut buf[12..]).unwrap();
+                write_obj.pack_to_slice(output_buf).unwrap();
 
-                println!("send: {buf:?}");
+                println!("send: {output_buf:?}");
 
                 // lmao no way thats all it is
+
+                /*
                 let (frame, handle) = unsafe { maindevice.prep_rx_tx(0, &buf).unwrap().unwrap() };
                 ecat::setup::setup_write(
                     frame,
@@ -325,6 +344,7 @@ impl UserState {
                     Some(idx),
                     None,
                 )?;
+                */
 
                 *self = Self::Test(0);
 
@@ -335,6 +355,7 @@ impl UserState {
 
                 *self = Self::Init(ctrl);
                 */
+                Ok(Some(ControlFlow::Send))
             }
             Self::Test(step) => {
                 if *step < 10000 {
@@ -342,13 +363,40 @@ impl UserState {
                 }
                 let (received, _header) = received.unwrap();
 
+                let recv_bytes = &*received;
+                let recv_bytes = &recv_bytes[subdev.config.io.input.bytes.clone()];
+
                 use ethercrab::EtherCrabWireRead;
-                let recv = RecvObj::unpack_from_slice(&*received).unwrap();
+                let recv = RecvObj::unpack_from_slice(recv_bytes).unwrap();
+
+                if *step > 1500 && recv.status & RecvObj::ERR_MASK == RecvObj::ERR_MASK {
+                    let mbx_count = subdev.mailbox_counter();
+                    let mut read_err = SdoRead::new(mbx_count, 0x603F, 0);
+
+                    let configured_addr = subdev.configured_address();
+
+                    read_err.start(
+                        maindevice,
+                        retry_count,
+                        timeout_duration,
+                        tx_entries,
+                        sock,
+                        ring,
+                        &subdev.config.mailbox.write.unwrap(),
+                        &subdev.config.mailbox.read.unwrap(),
+                        configured_addr,
+                        identifier,
+                        idx,
+                    )?;
+
+                    *self = Self::Error(read_err);
+                    return Ok(None);
+                }
 
                 println!("step {step} state: {:?}", recv);
 
                 let step = *step;
-                let (ctrl, velocity) = if step < 1000 {
+                let (ctrl, mut velocity) = if step < 1000 {
                     (0x0080, 0)
                 } else if step < 1500 {
                     (0x0006, 0)
@@ -360,26 +408,68 @@ impl UserState {
                     (0x000F, -25000)
                 };
 
-                let mut buf = [0; 20];
+                if idx > 0 {
+                    velocity *= -1;
+                }
+
                 use ethercrab::EtherCrabWireWrite;
                 let write_obj = WriteObj::new(ctrl, velocity, 9);
-                write_obj.pack_to_slice(&mut buf[12..]).unwrap();
+                write_obj.pack_to_slice(output_buf).unwrap();
 
-                let (frame, handle) = unsafe { maindevice.prep_rx_tx(0, &buf).unwrap().unwrap() };
-                ecat::setup::setup_write(
-                    frame,
-                    handle,
+                Ok(Some(ControlFlow::Send))
+            }
+            Self::Error(err) => {
+                let (received, header) = received.unwrap();
+                if let Some(err_code) = err.update(
+                    received,
+                    header,
+                    maindevice,
                     retry_count,
                     timeout_duration,
                     tx_entries,
                     sock,
                     ring,
-                    Some(idx),
-                    None,
-                )?;
+                    &subdev.config.mailbox.write.unwrap(),
+                    &subdev.config.mailbox.read.unwrap(),
+                    subdev.configured_address(),
+                    identifier,
+                    idx,
+                )? {
+                    if matches!(err_code, 0 | 0x730F | 0xA000) {
+                        //TODO: if in 0xA000, request to move back to the state the motor is in
+
+                        println!("insignificant err, retry rx/tx");
+                        let mut buf = [0; 20];
+                        use ethercrab::EtherCrabWireWrite;
+                        let write_obj = WriteObj::new(0x0080, 0, 9);
+                        write_obj.pack_to_slice(&mut buf[12..]).unwrap();
+
+                        println!("send: {buf:?}");
+
+                        // lmao no way thats all it is
+                        let (frame, handle) =
+                            unsafe { maindevice.prep_rx_tx(0, &buf).unwrap().unwrap() };
+                        ecat::setup::setup_write(
+                            frame,
+                            handle,
+                            retry_count,
+                            timeout_duration,
+                            tx_entries,
+                            sock,
+                            ring,
+                            Some(idx),
+                            None,
+                        )?;
+
+                        *self = Self::Test(0);
+                        return Ok(Some(ControlFlow::Send));
+                    }
+
+                    panic!("error with code 0x{:02x}", err_code);
+                }
+                Ok(None)
             }
         }
-        Ok(())
     }
 }
 

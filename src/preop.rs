@@ -66,7 +66,7 @@ impl<'a, const N: usize> PreOp<'a, N> {
         })
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn update<const I: usize, const O: usize>(
         &mut self,
         received: ReceivedPdu<'_>,
@@ -83,7 +83,7 @@ impl<'a, const N: usize> PreOp<'a, N> {
             ethercrab::SubDeviceRef<'_, &mut ethercrab::SubDevice>,
         ) -> &'a PdoConfig<'a, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
-    ) -> Result<Option<Deque<(SubDevice, PreOpConfigState<'a>), N>>, Error> {
+    ) -> Result<Option<(Deque<(SubDevice, PreOpConfigState<'a>), N>, SendRecvIo)>, Error> {
         let idx = idx.unwrap() as usize;
         let (dev, state) = self.subdevices.get_mut(idx).unwrap();
 
@@ -91,7 +91,7 @@ impl<'a, const N: usize> PreOp<'a, N> {
 
         let cfg = config(subdev);
 
-        if state.update(
+        if let Some(io) = state.update(
             received,
             header,
             maindevice,
@@ -111,10 +111,26 @@ impl<'a, const N: usize> PreOp<'a, N> {
         )? {
             self.configured_count += 1;
             if usize::from(self.configured_count) == self.subdevices.len() {
-                return Ok(Some(core::mem::take(&mut self.subdevices)));
+                return Ok(Some((core::mem::take(&mut self.subdevices), io)));
             }
         }
         Ok(None)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct SendRecvIo {
+    input_end: usize,
+    output_end: usize,
+}
+
+impl SendRecvIo {
+    pub fn output_len(&self) -> usize {
+        self.output_end - self.input_end
+    }
+
+    pub fn input_len(&self) -> usize {
+        self.input_end
     }
 }
 
@@ -122,7 +138,7 @@ impl<'a, const N: usize> PreOp<'a, N> {
 pub(crate) enum PreOpConfigState<'a> {
     Pdos(PdoMappingConfig<'a>),
     Fmmus(ConfigureFmmus),
-    SafeOpTransition(Transition),
+    SafeOpTransition(Transition, SendRecvIo),
 }
 
 impl<'a> PreOpConfigState<'a> {
@@ -184,7 +200,7 @@ impl<'a> PreOpConfigState<'a> {
         identifier: Option<u8>,
         config: &'a PdoConfig<'a, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<SendRecvIo>, Error> {
         match self {
             Self::Pdos(pdos) => {
                 if pdos.update(
@@ -222,7 +238,7 @@ impl<'a> PreOpConfigState<'a> {
                 }
             }
             Self::Fmmus(fmmus) => {
-                if fmmus.update(
+                if let Some((input_len, output_len)) = fmmus.update(
                     received,
                     header,
                     maindevice,
@@ -251,10 +267,16 @@ impl<'a> PreOpConfigState<'a> {
                         configured_addr,
                         idx,
                     )?;
-                    *self = Self::SafeOpTransition(state);
+                    *self = Self::SafeOpTransition(
+                        state,
+                        SendRecvIo {
+                            input_end: input_len,
+                            output_end: output_len,
+                        },
+                    );
                 }
             }
-            Self::SafeOpTransition(transition) => {
+            Self::SafeOpTransition(transition, io) => {
                 if transition.update(
                     received,
                     header,
@@ -267,10 +289,10 @@ impl<'a> PreOpConfigState<'a> {
                     configured_addr,
                     idx,
                 )? {
-                    return Ok(true);
+                    return Ok(Some(*io));
                 }
             }
         }
-        Ok(false)
+        Ok(None)
     }
 }

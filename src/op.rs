@@ -10,6 +10,7 @@ pub struct Op<const N: usize, T> {
 }
 
 impl<const N: usize, T: Default> Op<N, T> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_new<S>(
         subdevs: Deque<(SubDevice, S), N>,
         maindevice: &mut MainDevice,
@@ -24,12 +25,23 @@ impl<const N: usize, T: Default> Op<N, T> {
             &mut IoUring,
             u16,
             Option<u8>,
-        ) -> std::io::Result<()>,
+            &mut [u8],
+        ) -> std::io::Result<Option<crate::user::ControlFlow>>,
+        output_buf: &mut [u8],
+        retry_count: usize,
+        timeout: &io_uring::types::Timespec,
+        sock: &ethercrab::std::RawSocketDesc,
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
         for (id, (mut subdev, _)) in subdevs.into_iter().enumerate() {
             let mut state = T::default();
-            user_cb(
+
+            println!("dev state: {:?}", subdev.config.io);
+
+            let buf_range = subdev.config.io.output.bytes.clone();
+            let user_output_buf = &mut output_buf[buf_range];
+
+            if let Some(flow) = user_cb(
                 maindevice,
                 &mut subdev,
                 &mut state,
@@ -38,8 +50,30 @@ impl<const N: usize, T: Default> Op<N, T> {
                 ring,
                 id as _,
                 None,
+                user_output_buf,
             )
-            .map_err(|_| Error::Internal)?;
+            .map_err(|_| Error::Internal)?
+            {
+                use crate::user::ControlFlow;
+                match flow {
+                    ControlFlow::Send => {
+                        let (frame, handle) =
+                            unsafe { maindevice.prep_rx_tx(0, output_buf) }?.unwrap();
+
+                        crate::setup::setup_write(
+                            frame,
+                            handle,
+                            retry_count,
+                            timeout,
+                            tx_entries,
+                            sock,
+                            ring,
+                            Some(id as _),
+                            None,
+                        )?;
+                    }
+                }
+            }
             let _ = subdevices.push_back((subdev, state));
         }
 
@@ -65,10 +99,15 @@ impl<const N: usize, T: Default> Op<N, T> {
             &mut IoUring,
             u16,
             Option<u8>,
-        ) -> std::io::Result<()>,
-    ) -> Result<(), Error> {
+            &mut [u8],
+        ) -> std::io::Result<Option<crate::user::ControlFlow>>,
+        output_buf: &mut [u8],
+    ) -> Result<Option<crate::user::ControlFlow>, Error> {
         let idx = idx.unwrap() as usize;
         let (dev, state) = self.subdevices.get_mut(idx).unwrap();
+
+        let buf_range = dev.config.io.output.bytes.clone();
+        let user_output_buf = &mut output_buf[buf_range];
 
         user_cb(
             maindevice,
@@ -79,9 +118,9 @@ impl<const N: usize, T: Default> Op<N, T> {
             ring,
             idx as _,
             identifier,
+            user_output_buf,
         )
-        .map_err(|_| Error::Internal)?;
-        Ok(())
+        .map_err(|_| Error::Internal)
     }
 
     pub fn subdev_mut(&mut self, idx: usize) -> Option<&mut (SubDevice, T)> {

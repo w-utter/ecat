@@ -16,6 +16,7 @@ pub mod setup;
 mod state;
 mod state_transition;
 mod txbuf;
+pub mod user;
 
 //TODO: write example
 

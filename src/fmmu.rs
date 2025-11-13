@@ -27,6 +27,8 @@ pub enum ConfigureFmmus {
         output_iter: heapless::index_map::IntoIter<u8, FmmuMapping, 16>,
         current_input: Option<ConfigureFmmu>,
         current_output: Option<ConfigureFmmu>,
+        input_len: Option<usize>,
+        output_len: Option<usize>,
     },
 }
 
@@ -84,7 +86,7 @@ impl ConfigureFmmus {
         identifier: Option<u8>,
         config: &PdoConfig<'_, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
-    ) -> Result<bool, Error> {
+    ) -> Result<Option<(usize, usize)>, Error> {
         match self {
             Self::SyncManagers(managers, collected) => {
                 if let Some(more) = managers.update(
@@ -201,6 +203,8 @@ impl ConfigureFmmus {
                             output_iter,
                             current_input,
                             current_output: None,
+                            input_len: None,
+                            output_len: None,
                         };
                     }
                 }
@@ -210,6 +214,8 @@ impl ConfigureFmmus {
                 output_iter,
                 current_input,
                 current_output,
+                input_len,
+                output_len,
             } => {
                 println!("id: {:?}", identifier);
                 match identifier.map(|id| (id >> 2) & 0b11) {
@@ -255,6 +261,7 @@ impl ConfigureFmmus {
                             // doing this sequentially again
                             // due to needing sequential access to the pdi
                             if current_input.is_none() {
+                                *input_len = Some(pdi_offset.start_address as _);
                                 *current_output = output_iter
                                     .next()
                                     .map(|(sm_idx, mapping)| {
@@ -277,7 +284,10 @@ impl ConfigureFmmus {
                             }
 
                             if current_input.is_none() && current_output.is_none() {
-                                return Ok(true);
+                                return Ok(Some((
+                                    input_len.unwrap_or_default(),
+                                    output_len.unwrap_or_default(),
+                                )));
                             }
                         }
                     }
@@ -320,8 +330,15 @@ impl ConfigureFmmus {
                                 })
                                 .transpose()?;
 
+                            if current_output.is_none() {
+                                *output_len = Some(pdi_offset.start_address as _);
+                            }
+
                             if current_input.is_none() && current_output.is_none() {
-                                return Ok(true);
+                                return Ok(Some((
+                                    input_len.unwrap_or_default(),
+                                    output_len.unwrap_or_default(),
+                                )));
                             }
                         }
                     }
@@ -329,7 +346,7 @@ impl ConfigureFmmus {
                 }
             }
         }
-        Ok(false)
+        Ok(None)
     }
 }
 

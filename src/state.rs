@@ -14,8 +14,25 @@ pub enum InitState<'a, const MAX_SUBDEVICES: usize, T> {
     Dc(crate::dc::Dc<MAX_SUBDEVICES>),
     Mbx(crate::mbx_config::MailboxConfig<MAX_SUBDEVICES>),
     PreOp(crate::preop::PreOp<'a, MAX_SUBDEVICES>),
-    SafeOp(crate::safeop::SafeOp<MAX_SUBDEVICES>),
-    Op(crate::op::Op<MAX_SUBDEVICES, T>),
+    SafeOp(
+        crate::safeop::SafeOp<MAX_SUBDEVICES>,
+        crate::preop::SendRecvIo,
+    ),
+    Op(crate::op::Op<MAX_SUBDEVICES, T>, SendCtx),
+}
+
+pub struct SendCtx {
+    send_bytes: Vec<u8>,
+    _input_offset: usize,
+}
+
+impl From<crate::preop::SendRecvIo> for SendCtx {
+    fn from(f: crate::preop::SendRecvIo) -> SendCtx {
+        Self {
+            send_bytes: vec![0; f.output_len() + f.input_len()],
+            _input_offset: f.input_len(),
+        }
+    }
 }
 
 impl<const N: usize, T: Default> Default for InitState<'_, N, T> {
@@ -70,7 +87,8 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
             &mut IoUring,
             u16,
             Option<u8>,
-        ) -> std::io::Result<()>,
+            &mut [u8],
+        ) -> std::io::Result<Option<crate::user::ControlFlow>>,
     ) -> Result<(), Error> {
         match self {
             Self::Reset(r) => {
@@ -158,7 +176,7 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
                 }
             }
             Self::PreOp(p) => {
-                if let Some(devs) = p.update(
+                if let Some((devs, io)) = p.update(
                     received,
                     header,
                     maindevice,
@@ -182,10 +200,10 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
                         ring,
                     )?;
 
-                    *self = Self::SafeOp(safeop);
+                    *self = Self::SafeOp(safeop, io);
                 }
             }
-            Self::SafeOp(o) => {
+            Self::SafeOp(o, io) => {
                 if let Some(devs) = o.update(
                     received,
                     header,
@@ -197,15 +215,55 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
                     ring,
                     index,
                 )? {
-                    let op = crate::op::Op::start_new(devs, maindevice, tx_entries, ring, user_cb)?;
+                    let mut io: SendCtx = (*io).into();
 
-                    *self = Self::Op(op);
+                    let op = crate::op::Op::start_new(
+                        devs,
+                        maindevice,
+                        tx_entries,
+                        ring,
+                        user_cb,
+                        &mut io.send_bytes,
+                        retry_count,
+                        timeout,
+                        sock,
+                    )?;
+
+                    *self = Self::Op(op, io);
                 }
             }
-            Self::Op(o) => {
-                o.update(
-                    received, header, maindevice, tx_entries, ring, identifier, index, user_cb,
-                )?;
+            Self::Op(o, io) => {
+                if let Some(flow) = o.update(
+                    received,
+                    header,
+                    maindevice,
+                    tx_entries,
+                    ring,
+                    identifier,
+                    index,
+                    user_cb,
+                    &mut io.send_bytes,
+                )? {
+                    use crate::user::ControlFlow;
+                    match flow {
+                        ControlFlow::Send => {
+                            let (frame, handle) =
+                                unsafe { maindevice.prep_rx_tx(0, &io.send_bytes) }?.unwrap();
+
+                            crate::setup::setup_write(
+                                frame,
+                                handle,
+                                retry_count,
+                                timeout,
+                                tx_entries,
+                                sock,
+                                ring,
+                                index,
+                                identifier,
+                            )?;
+                        }
+                    }
+                }
             }
             _ => todo!(),
         }

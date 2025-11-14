@@ -9,6 +9,11 @@ use crate::pdo::PdoConfig;
 
 pub enum InitState<'a, const MAX_SUBDEVICES: usize, const I: usize, const O: usize, U> {
     Idle,
+
+    //TODO: all of the earlier stuff (resetting, configuration, etc) needs to be done in
+    //series.
+
+
     Reset(crate::reset::Reset),
     Init(crate::init::Init<MAX_SUBDEVICES>),
     Dc(crate::dc::Dc<MAX_SUBDEVICES>),
@@ -23,14 +28,14 @@ pub enum InitState<'a, const MAX_SUBDEVICES: usize, const I: usize, const O: usi
 
 pub struct SendCtx {
     send_bytes: Vec<u8>,
-    _input_offset: usize,
+    input_offset: usize,
 }
 
 impl From<crate::preop::SendRecvIo> for SendCtx {
     fn from(f: crate::preop::SendRecvIo) -> SendCtx {
         Self {
             send_bytes: vec![0; f.output_len() + f.input_len()],
-            _input_offset: f.input_len(),
+            input_offset: f.input_len(),
         }
     }
 }
@@ -83,7 +88,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
         user_cb: impl FnMut(
             &mut MainDevice,
             &mut U,
-            Option<(ReceivedPdu<'_>, PduHeader)>,
+            Option<crate::op::DeviceResponse<'_, '_>>,
             &mut BTreeMap<u64, TxBuf>,
             &mut IoUring,
             u16,
@@ -242,7 +247,11 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     identifier,
                     index,
                     user_cb,
+                    io.input_offset,
                     &mut io.send_bytes,
+                    retry_count,
+                    timeout,
+                    sock,
                 )? {
                     use crate::user::ControlFlow;
                     match flow {

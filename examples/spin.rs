@@ -2,7 +2,7 @@ use ecat::{
     InitState, PdoConfig, PdoMapping, PdoObject, SdoRead, SdoWrite, TxBuf, TxIndex,
     user::ControlFlow,
 };
-use ethercrab::{PduHeader, SubDevice, error::Error, received_frame::ReceivedPdu};
+use ethercrab::{SubDevice, error::Error};
 
 use ecat::io::{TIMEOUT_CLEAR_MASK, TIMEOUT_MASK, WRITE_MASK};
 
@@ -249,7 +249,7 @@ impl User {
     #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
-        received: Option<(ReceivedPdu<'_>, PduHeader)>,
+        received: Option<ecat::DeviceResponse<'_, '_>>,
         maindevice: &MainDevice,
         retry_count: usize,
         timeout_duration: &Timespec,
@@ -353,7 +353,7 @@ impl UserState {
     #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
-        received: Option<(ReceivedPdu<'_>, PduHeader)>,
+        received: Option<ecat::DeviceResponse<'_, '_>>,
         maindevice: &MainDevice,
         retry_count: usize,
         timeout_duration: &Timespec,
@@ -378,13 +378,14 @@ impl UserState {
                 Ok(Some(ControlFlow::Send))
             }
             Self::Test(step) => {
+                let Some(ecat::DeviceResponse::Pdi(recv_bytes)) = received else {
+                    panic!("Received smth else");
+                    return Ok(None);
+                };
+                
                 if *step < 10000 {
                     *step += 1;
                 }
-                let (received, _header) = received.unwrap();
-
-                let recv_bytes = &*received;
-                let recv_bytes = &recv_bytes[subdev.config.io.input.bytes.clone()];
 
                 use ethercrab::EtherCrabWireRead;
                 let recv = RecvObj::unpack_from_slice(recv_bytes).unwrap();
@@ -439,7 +440,9 @@ impl UserState {
                 Ok(Some(ControlFlow::Send))
             }
             Self::Error(err) => {
-                let (received, header) = received.unwrap();
+                let Some(ecat::DeviceResponse::Pdu(received, header)) = received else {
+                    return Ok(None);
+                };
                 if let Some(err_code) = err.update(
                     received,
                     header,

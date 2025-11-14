@@ -13,14 +13,16 @@ use crate::pdo_config::PdoMappingConfig;
 
 use heapless::Deque;
 
-pub struct PreOp<'a, const N: usize> {
-    subdevices: Deque<(SubDevice, PreOpConfigState<'a>), N>,
+pub struct PreOp<'a, const N: usize, const I: usize, const O: usize, U> {
+    subdevices: Deque<(U, &'a PdoConfig<'a, I, O>, PreOpConfigState<'a>), N>,
     configured_count: u16,
 }
 
-impl<'a, const N: usize> PreOp<'a, N> {
+impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDevice>
+    PreOp<'a, N, I, O, U>
+{
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn start_new<const I: usize, const O: usize, S>(
+    pub(crate) fn start_new<S>(
         subdevs: Deque<(SubDevice, S), N>,
         maindevice: &MainDevice,
         retry_count: usize,
@@ -28,21 +30,21 @@ impl<'a, const N: usize> PreOp<'a, N> {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
-        mut config: impl FnMut(
-            ethercrab::SubDeviceRef<'_, &mut ethercrab::SubDevice>,
-        ) -> &'a PdoConfig<'a, I, O>,
+        mut config: impl FnMut(&MainDevice, ethercrab::SubDevice) -> (U, &'a PdoConfig<'a, I, O>),
     ) -> Result<Self, Error> {
         let mut devs = Deque::new();
 
-        for (id, (mut subdev, _)) in subdevs.into_iter().enumerate() {
-            let subdev_ref =
-                ethercrab::SubDeviceRef::new(maindevice, subdev.configured_address(), &mut subdev);
+        for (id, (subdev, _)) in subdevs.into_iter().enumerate() {
+            //let subdev_ref =
+            //ethercrab::SubDeviceRef::new(maindevice, subdev.configured_address(), &mut subdev);
 
-            let cfg = config(subdev_ref);
+            let (mut dev, cfg) = config(maindevice, subdev);
 
             println!("\n\nmoving to pre op\n\n");
 
-            let mut state = PreOpConfigState::new(cfg, &subdev);
+            let mut state = PreOpConfigState::new(cfg, dev.subdevice());
+
+            let subdev = dev.subdevice_mut();
 
             state.start(
                 maindevice,
@@ -57,7 +59,7 @@ impl<'a, const N: usize> PreOp<'a, N> {
                 id as u16,
             )?;
 
-            let _ = devs.push_back((subdev, state));
+            let _ = devs.push_back((dev, cfg, state));
         }
 
         Ok(Self {
@@ -67,7 +69,7 @@ impl<'a, const N: usize> PreOp<'a, N> {
     }
 
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub(crate) fn update<const I: usize, const O: usize>(
+    pub(crate) fn update(
         &mut self,
         received: ReceivedPdu<'_>,
         header: PduHeader,
@@ -79,17 +81,17 @@ impl<'a, const N: usize> PreOp<'a, N> {
         ring: &mut IoUring,
         identifier: Option<u8>,
         idx: Option<u16>,
-        mut config: impl FnMut(
-            ethercrab::SubDeviceRef<'_, &mut ethercrab::SubDevice>,
-        ) -> &'a PdoConfig<'a, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
-    ) -> Result<Option<(Deque<(SubDevice, PreOpConfigState<'a>), N>, SendRecvIo)>, Error> {
+    ) -> Result<
+        Option<(
+            Deque<(U, &'a PdoConfig<'a, I, O>, PreOpConfigState<'a>), N>,
+            SendRecvIo,
+        )>,
+        Error,
+    > {
         let idx = idx.unwrap() as usize;
-        let (dev, state) = self.subdevices.get_mut(idx).unwrap();
-
-        let subdev = ethercrab::SubDeviceRef::new(maindevice, dev.configured_address(), &mut *dev);
-
-        let cfg = config(subdev);
+        let (dev, cfg, state) = self.subdevices.get_mut(idx).unwrap();
+        let dev = dev.subdevice_mut();
 
         if let Some(io) = state.update(
             received,

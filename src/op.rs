@@ -1,25 +1,24 @@
 use crate::txbuf::TxBuf;
-use ethercrab::{MainDevice, PduHeader, SubDevice, error::Error, received_frame::ReceivedPdu};
+use ethercrab::{MainDevice, PduHeader, error::Error, received_frame::ReceivedPdu};
 use io_uring::IoUring;
 use std::collections::BTreeMap;
 
 use heapless::Deque;
 
-pub struct Op<const N: usize, T> {
-    subdevices: Deque<(SubDevice, T), N>,
+pub struct Op<const N: usize, U> {
+    subdevices: Deque<U, N>,
 }
 
-impl<const N: usize, T: Default> Op<N, T> {
+impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_new<S>(
-        subdevs: Deque<(SubDevice, S), N>,
+        subdevs: Deque<(U, S), N>,
         maindevice: &mut MainDevice,
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         ring: &mut IoUring,
         mut user_cb: impl FnMut(
             &mut MainDevice,
-            &mut ethercrab::SubDevice,
-            &mut T,
+            &mut U,
             Option<(ReceivedPdu<'_>, PduHeader)>,
             &mut BTreeMap<u64, TxBuf>,
             &mut IoUring,
@@ -34,17 +33,14 @@ impl<const N: usize, T: Default> Op<N, T> {
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
         for (id, (mut subdev, _)) in subdevs.into_iter().enumerate() {
-            let mut state = T::default();
+            println!("dev state: {:?}", subdev.subdevice().config.io);
 
-            println!("dev state: {:?}", subdev.config.io);
-
-            let buf_range = subdev.config.io.output.bytes.clone();
+            let buf_range = subdev.subdevice().config.io.output.bytes.clone();
             let user_output_buf = &mut output_buf[buf_range];
 
             if let Some(flow) = user_cb(
                 maindevice,
                 &mut subdev,
-                &mut state,
                 None,
                 tx_entries,
                 ring,
@@ -74,7 +70,7 @@ impl<const N: usize, T: Default> Op<N, T> {
                     }
                 }
             }
-            let _ = subdevices.push_back((subdev, state));
+            let _ = subdevices.push_back(subdev);
         }
 
         Ok(Self { subdevices })
@@ -92,8 +88,7 @@ impl<const N: usize, T: Default> Op<N, T> {
         idx: Option<u16>,
         mut user_cb: impl FnMut(
             &mut MainDevice,
-            &mut ethercrab::SubDevice,
-            &mut T,
+            &mut U,
             Option<(ReceivedPdu<'_>, PduHeader)>,
             &mut BTreeMap<u64, TxBuf>,
             &mut IoUring,
@@ -104,15 +99,14 @@ impl<const N: usize, T: Default> Op<N, T> {
         output_buf: &mut [u8],
     ) -> Result<Option<crate::user::ControlFlow>, Error> {
         let idx = idx.unwrap() as usize;
-        let (dev, state) = self.subdevices.get_mut(idx).unwrap();
+        let dev = self.subdevices.get_mut(idx).unwrap();
 
-        let buf_range = dev.config.io.output.bytes.clone();
+        let buf_range = dev.subdevice().config.io.output.bytes.clone();
         let user_output_buf = &mut output_buf[buf_range];
 
         user_cb(
             maindevice,
             dev,
-            state,
             Some((received, header)),
             tx_entries,
             ring,
@@ -123,7 +117,7 @@ impl<const N: usize, T: Default> Op<N, T> {
         .map_err(|_| Error::Internal)
     }
 
-    pub fn subdev_mut(&mut self, idx: usize) -> Option<&mut (SubDevice, T)> {
+    pub fn subdev_mut(&mut self, idx: usize) -> Option<&mut U> {
         self.subdevices.get_mut(idx)
     }
 }

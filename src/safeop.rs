@@ -1,6 +1,6 @@
 use crate::txbuf::TxBuf;
 use ethercrab::{
-    MainDevice, PduHeader, SubDevice, error::Error, received_frame::ReceivedPdu, std::RawSocketDesc,
+    MainDevice, PduHeader, error::Error, received_frame::ReceivedPdu, std::RawSocketDesc,
 };
 use io_uring::{IoUring, types::Timespec};
 use std::collections::BTreeMap;
@@ -9,14 +9,14 @@ use crate::state_transition::Transition;
 
 use heapless::Deque;
 
-pub struct SafeOp<const N: usize> {
-    subdevices: Deque<(SubDevice, Transition), N>,
+pub struct SafeOp<const N: usize, U> {
+    subdevices: Deque<(U, Transition), N>,
     transition_count: u16,
 }
 
-impl<const N: usize> SafeOp<N> {
-    pub(crate) fn start_new<S>(
-        subdevs: Deque<(SubDevice, S), N>,
+impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
+    pub(crate) fn start_new<S1, S2>(
+        subdevs: Deque<(U, S1, S2), N>,
         maindevice: &MainDevice,
         retry_count: usize,
         timeout_duration: &Timespec,
@@ -27,7 +27,7 @@ impl<const N: usize> SafeOp<N> {
         println!("\n\nmoving to op\n\n");
 
         let mut devs = Deque::new();
-        for (id, (subdev, _)) in subdevs.into_iter().enumerate() {
+        for (id, (subdev, _, _)) in subdevs.into_iter().enumerate() {
             let mut state = Transition::new(ethercrab::SubDeviceState::Op);
 
             state.start(
@@ -37,7 +37,7 @@ impl<const N: usize> SafeOp<N> {
                 tx_entries,
                 sock,
                 ring,
-                subdev.configured_address(),
+                subdev.subdevice().configured_address(),
                 id as u16,
             )?;
 
@@ -62,10 +62,10 @@ impl<const N: usize> SafeOp<N> {
         sock: &RawSocketDesc,
         ring: &mut IoUring,
         idx: Option<u16>,
-    ) -> Result<Option<Deque<(SubDevice, Transition), N>>, Error> {
+    ) -> Result<Option<Deque<(U, Transition), N>>, Error> {
         let idx = idx.unwrap() as usize;
         let (dev, state) = self.subdevices.get_mut(idx).unwrap();
-        let configured_addr = dev.configured_address();
+        let configured_addr = dev.subdevice().configured_address();
 
         if state.update(
             received,

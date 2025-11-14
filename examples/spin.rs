@@ -71,7 +71,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     //TODO: update to actual timeout duration.
     let timeout = Timespec::new().sec(1);
 
-    let mut state = InitState::<16, UserState>::new();
+    let mut state = InitState::<16, _, _, _>::new();
     state.start(
         &maindevice,
         retries,
@@ -141,22 +141,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         res.configured_addr,
                         res.identifier,
                         &mut pdi_offset,
-                        |_| &config,
+                        |_maindev, subdev| (User::new(subdev), &config),
                         |maindev,
-                         subdev,
-                         state,
+                         dev,
                          received,
                          entries,
                          ring,
                          index,
                          identifier,
                          output_buf| {
-                            let flow = state
+                            let flow = dev
                                 .update(
                                     received, maindev, retries, &timeout, entries, &sock, ring,
-                                    subdev, index, identifier, output_buf,
-                                )
-                                .unwrap();
+                                    index, identifier, output_buf,
+                                ).unwrap();
+
                             Ok(flow)
                         },
                     );
@@ -234,6 +233,51 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+struct User {
+    device: ethercrab::SubDevice,
+    state: UserState,
+}
+
+impl User {
+    fn new(device: ethercrab::SubDevice) -> Self {
+        Self {
+            device,
+            state: Default::default(),
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn update(
+        &mut self,
+        received: Option<(ReceivedPdu<'_>, PduHeader)>,
+        maindevice: &MainDevice,
+        retry_count: usize,
+        timeout_duration: &Timespec,
+        tx_entries: &mut BTreeMap<u64, TxBuf>,
+        sock: &RawSocketDesc,
+        ring: &mut io_uring::IoUring,
+        idx: u16,
+        identifier: Option<u8>,
+        output_buf: &mut [u8],
+    ) -> Result<Option<ControlFlow>, Error> {
+        self.state.update(received, maindevice, retry_count, timeout_duration, tx_entries, sock, ring, &mut self.device, idx, identifier, output_buf)
+    }
+}
+
+impl ecat::user::UserDevice for User {
+    fn subdevice(&self) -> &ethercrab::SubDevice {
+        &self.device
+    }
+
+    fn subdevice_mut(&mut self) -> &mut ethercrab::SubDevice {
+        &mut self.device
+    }
+
+    fn into_subdevice(self) -> ethercrab::SubDevice {
+        self.device
+    }
+}
+
 #[derive(Default)]
 enum UserState {
     #[default]
@@ -306,6 +350,7 @@ impl core::fmt::Debug for RecvObj {
 }
 
 impl UserState {
+    #[allow(clippy::too_many_arguments)]
     fn update(
         &mut self,
         received: Option<(ReceivedPdu<'_>, PduHeader)>,
@@ -329,32 +374,7 @@ impl UserState {
 
                 println!("send: {output_buf:?}");
 
-                // lmao no way thats all it is
-
-                /*
-                let (frame, handle) = unsafe { maindevice.prep_rx_tx(0, &buf).unwrap().unwrap() };
-                ecat::setup::setup_write(
-                    frame,
-                    handle,
-                    retry_count,
-                    timeout_duration,
-                    tx_entries,
-                    sock,
-                    ring,
-                    Some(idx),
-                    None,
-                )?;
-                */
-
                 *self = Self::Test(0);
-
-                // TODO: bring this back once testing tx/rx loop
-                /*
-                let mut ctrl = UserControlInit::new(subdev, 9);
-                ctrl.start(maindevice, retry_count, timeout_duration, tx_entries, sock, ring, subdev, idx);
-
-                *self = Self::Init(ctrl);
-                */
                 Ok(Some(ControlFlow::Send))
             }
             Self::Test(step) => {

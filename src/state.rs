@@ -7,18 +7,18 @@ use std::collections::BTreeMap;
 
 use crate::pdo::PdoConfig;
 
-pub enum InitState<'a, const MAX_SUBDEVICES: usize, T> {
+pub enum InitState<'a, const MAX_SUBDEVICES: usize, const I: usize, const O: usize, U> {
     Idle,
     Reset(crate::reset::Reset),
     Init(crate::init::Init<MAX_SUBDEVICES>),
     Dc(crate::dc::Dc<MAX_SUBDEVICES>),
     Mbx(crate::mbx_config::MailboxConfig<MAX_SUBDEVICES>),
-    PreOp(crate::preop::PreOp<'a, MAX_SUBDEVICES>),
+    PreOp(crate::preop::PreOp<'a, MAX_SUBDEVICES, I, O, U>),
     SafeOp(
-        crate::safeop::SafeOp<MAX_SUBDEVICES>,
+        crate::safeop::SafeOp<MAX_SUBDEVICES, U>,
         crate::preop::SendRecvIo,
     ),
-    Op(crate::op::Op<MAX_SUBDEVICES, T>, SendCtx),
+    Op(crate::op::Op<MAX_SUBDEVICES, U>, SendCtx),
 }
 
 pub struct SendCtx {
@@ -35,17 +35,21 @@ impl From<crate::preop::SendRecvIo> for SendCtx {
     }
 }
 
-impl<const N: usize, T: Default> Default for InitState<'_, N, T> {
+impl<const N: usize, const I: usize, const O: usize, U> Default for InitState<'_, N, I, O, U> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
+impl<const N: usize, const I: usize, const O: usize, U> InitState<'_, N, I, O, U> {
     pub fn new() -> Self {
         Self::Idle
     }
+}
 
+impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDevice>
+    InitState<'a, N, I, O, U>
+{
     pub fn start(
         &mut self,
         maindevice: &MainDevice,
@@ -62,7 +66,7 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub fn update<const I: usize, const O: usize>(
+    pub fn update(
         &mut self,
         received: ReceivedPdu<'_>,
         header: PduHeader,
@@ -75,13 +79,10 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
         index: Option<u16>,
         identifier: Option<u8>,
         pdi_offset: &mut ethercrab::PdiOffset,
-        config: impl FnMut(
-            ethercrab::SubDeviceRef<'_, &mut ethercrab::SubDevice>,
-        ) -> &'a PdoConfig<'a, I, O>,
+        config: impl FnMut(&MainDevice, ethercrab::SubDevice) -> (U, &'a PdoConfig<'a, I, O>),
         user_cb: impl FnMut(
             &mut MainDevice,
-            &mut ethercrab::SubDevice,
-            &mut T,
+            &mut U,
             Option<(ReceivedPdu<'_>, PduHeader)>,
             &mut BTreeMap<u64, TxBuf>,
             &mut IoUring,
@@ -187,7 +188,6 @@ impl<'a, const N: usize, T: Default> InitState<'a, N, T> {
                     ring,
                     identifier,
                     index,
-                    config,
                     pdi_offset,
                 )? {
                     let safeop = crate::safeop::SafeOp::start_new(

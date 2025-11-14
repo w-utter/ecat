@@ -33,8 +33,6 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
         for (id, (mut subdev, _)) in subdevs.into_iter().enumerate() {
-            println!("dev state: {:?}", subdev.subdevice().config.io);
-
             let buf_range = subdev.subdevice().config.io.output.bytes.clone();
             let user_output_buf = &mut output_buf[buf_range];
 
@@ -47,12 +45,12 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                 id as _,
                 None,
                 user_output_buf,
-            ).map_err(|_| Error::Internal)?;
+            )
+            .map_err(|_| Error::Internal)?;
             let _ = subdevices.push_back(subdev);
         }
 
-        let (frame, handle) =
-            unsafe { maindevice.prep_rx_tx(0, output_buf) }?.unwrap();
+        let (frame, handle) = unsafe { maindevice.prep_rx_tx(0, output_buf) }?.unwrap();
 
         crate::setup::setup_write(
             frame,
@@ -97,15 +95,18 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
     ) -> Result<Option<crate::user::ControlFlow>, Error> {
         let idx = idx.unwrap() as usize;
 
-        if header.command_code == 12  {
-            let received_bytes = &received[..input_end];
-            (&mut transmission_buf[..input_end]).copy_from_slice(received_bytes);
+        if header.command_code == 12 {
+            let received_bytes = &received[..];
+            (&mut transmission_buf[..received.len()]).copy_from_slice(received_bytes);
 
             let (input_buf, output_buf) = transmission_buf.split_at_mut(input_end);
 
+            let mut ctrl_flow = None;
+
             for (id, subdev) in self.subdevices.iter_mut().enumerate() {
                 let output_buf_range = subdev.subdevice().config.io.output.bytes.clone();
-                let output_buf_range = output_buf_range.start - input_end..output_buf_range.end - input_end;
+                let output_buf_range =
+                    output_buf_range.start - input_end..output_buf_range.end - input_end;
 
                 let Some(user_output_buf) = output_buf.get_mut(output_buf_range) else {
                     continue;
@@ -116,7 +117,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                     continue;
                 };
 
-                user_cb(
+                match (ctrl_flow, user_cb(
                     maindevice,
                     subdev,
                     Some(DeviceResponse::Pdi(user_input_buf)),
@@ -125,11 +126,15 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                     id as _,
                     None,
                     user_output_buf,
-                ).map_err(|_| Error::Internal)?;
+                )
+                .map_err(|_| Error::Internal)?) {
+                    (None, Some(f)) => ctrl_flow = Some(f),
+                    _ => (),
+                }
+
             }
 
-            let (frame, handle) =
-                unsafe { maindevice.prep_rx_tx(0, transmission_buf) }?.unwrap();
+            let (frame, handle) = unsafe { maindevice.prep_rx_tx(0, transmission_buf) }?.unwrap();
 
             crate::setup::setup_write(
                 frame,
@@ -143,7 +148,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                 None,
             )?;
 
-            Ok(None)
+            Ok(ctrl_flow)
         } else {
             let dev = self.subdevices.get_mut(idx).unwrap();
             let output_buf_range = dev.subdevice().config.io.output.bytes.clone();

@@ -1,7 +1,8 @@
 use crate::setup::setup_write;
 use crate::txbuf::TxBuf;
 use ethercrab::{
-    EtherCrabWireSized, MainDevice, PduHeader, error::Error, received_frame::ReceivedPdu,
+    ConfigureDevices, DeviceProperties, EtherCrabWireSized, MainDevice, PduHeader,
+    PrepConfigureDevices, PrepDeviceProperties, error::Error, received_frame::ReceivedPdu,
     std::RawSocketDesc,
 };
 use io_uring::{IoUring, types::Timespec};
@@ -28,29 +29,27 @@ impl<const N: usize> Init<N> {
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
 
-        maindevice.prep_configure_subdev_addrs(subdev_count, |res, id, addr| {
-            let (frame, handle) = res?.unwrap();
-            setup_write(
-                frame,
-                handle,
-                retry_count,
-                timeout,
-                tx_entries,
-                sock,
-                ring,
-                Some(id),
-                None,
-            )?;
+        let mut addr_state = PrepConfigureDevices::new(subdev_count);
 
-            let _ = subdevices.push_back(SubdevState::new(addr));
+        let (res, id, addr) = ConfigureDevices::iter(maindevice, &mut addr_state).unwrap();
+        let (frame, handle) = res?.unwrap();
 
-            Ok(())
-        })?;
+        setup_write(
+            frame,
+            handle,
+            retry_count,
+            timeout,
+            tx_entries,
+            sock,
+            ring,
+            Some(id),
+            None,
+        )?;
 
-        Ok(Self {
-            subdevices,
-            state: InitState::ConfigureAddresses(0),
-        })
+        let _ = subdevices.push_back(SubdevState::new(addr));
+        let state = InitState::ConfigureAddresses(addr_state);
+
+        Ok(Self { subdevices, state })
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -68,14 +67,28 @@ impl<const N: usize> Init<N> {
         identifier: Option<u8>,
     ) -> Result<Option<Deque<ethercrab::SubDevice, N>>, Error> {
         match &mut self.state {
-            InitState::ConfigureAddresses(configured_count) => {
+            InitState::ConfigureAddresses(addr_state) => {
                 if header.command_code != 2 {
                     unreachable!()
                 }
 
-                *configured_count += 1;
+                if let Some((res, id, addr)) = ConfigureDevices::iter(maindevice, addr_state) {
+                    let (frame, handle) = res?.unwrap();
 
-                if usize::from(*configured_count) != self.subdevices.len() {
+                    setup_write(
+                        frame,
+                        handle,
+                        retry_count,
+                        timeout,
+                        tx_entries,
+                        sock,
+                        ring,
+                        Some(id),
+                        None,
+                    )?;
+
+                    let _ = self.subdevices.push_back(SubdevState::new(addr));
+
                     return Ok(None);
                 }
 
@@ -111,20 +124,21 @@ impl<const N: usize> Init<N> {
                     todo!("handle devices that are not in init state during sync");
                 }
 
-                for (idx, subdev) in self.subdevices.iter_mut().enumerate() {
-                    subdev.start(
-                        maindevice,
-                        retry_count,
-                        timeout,
-                        tx_entries,
-                        sock,
-                        ring,
-                        idx as u16,
-                    )?;
-                }
+                let subdev = self.subdevices.front_mut().unwrap();
+
+                subdev.start(
+                    maindevice,
+                    retry_count,
+                    timeout,
+                    tx_entries,
+                    sock,
+                    ring,
+                    0,
+                )?;
+
                 self.state = InitState::ConfigureSubdevices(0);
             }
-            InitState::ConfigureSubdevices(configured_count) => {
+            InitState::ConfigureSubdevices(configured_idx) => {
                 let id = idx.expect("no index set :(");
 
                 let subdev = self
@@ -147,9 +161,23 @@ impl<const N: usize> Init<N> {
                     return Ok(None);
                 }
 
-                *configured_count += 1;
+                *configured_idx += 1;
 
-                if usize::from(*configured_count) != self.subdevices.len() {
+                if usize::from(*configured_idx) != self.subdevices.len() {
+                    let subdev = self
+                        .subdevices
+                        .get_mut(usize::from(*configured_idx))
+                        .unwrap();
+
+                    subdev.start(
+                        maindevice,
+                        retry_count,
+                        timeout,
+                        tx_entries,
+                        sock,
+                        ring,
+                        *configured_idx,
+                    )?;
                     return Ok(None);
                 }
 
@@ -172,7 +200,7 @@ impl<const N: usize> Init<N> {
 }
 
 enum InitState {
-    ConfigureAddresses(u16),
+    ConfigureAddresses(PrepConfigureDevices),
     SyncInit,
     ConfigureSubdevices(u16),
 }
@@ -275,8 +303,61 @@ impl SubdevState {
                         unreachable!()
                     }
 
-                    maindevice.prep_device_properties(*configured_addr, |res| {
-                        let (frame, handle) = res?.unwrap();
+                    let mut prep_state = PrepDeviceProperties::new(*configured_addr);
+
+                    let (frame, handle) = DeviceProperties::iter(maindevice, &mut prep_state)
+                        .unwrap()
+                        .unwrap()
+                        .unwrap();
+
+                    setup_write(
+                        frame,
+                        handle,
+                        retry_count,
+                        timeout,
+                        tx_entries,
+                        sock,
+                        ring,
+                        Some(idx),
+                        None,
+                    )?;
+
+                    let identity_state = RangeReader::new(
+                        0x0008,
+                        ethercrab::SubDeviceIdentity::PACKED_LEN as u16,
+                        Default::default(),
+                        1,
+                    );
+
+                    let name_state = name::NameState::new(2);
+
+                    *state = SubdevInitState::DeviceProperties {
+                        prep_state,
+                        identity: None,
+                        flags: None,
+                        alias_address: None,
+                        ports: None,
+                        identity_state,
+                        name_state,
+                        complete_access: false,
+                    };
+                }
+                SubdevInitState::DeviceProperties {
+                    prep_state,
+                    identity,
+                    flags,
+                    alias_address,
+                    ports,
+                    identity_state,
+                    name_state,
+                    complete_access,
+                } => {
+                    if !matches!(header.command_code, 4 | 5) {
+                        unreachable!("{}", header.command_code)
+                    }
+
+                    if let Some(res) = DeviceProperties::iter(maindevice, prep_state) {
+                        let (frame, handle) = res.unwrap().unwrap();
                         setup_write(
                             frame,
                             handle,
@@ -288,50 +369,7 @@ impl SubdevState {
                             Some(idx),
                             None,
                         )?;
-                        Ok(())
-                    })?;
-
-                    let mut identity_state = RangeReader::new(
-                        0x0008,
-                        ethercrab::SubDeviceIdentity::PACKED_LEN as u16,
-                        Default::default(),
-                        1,
-                    );
-
-                    identity_state.start(
-                        maindevice,
-                        retry_count,
-                        timeout,
-                        tx_entries,
-                        sock,
-                        ring,
-                        *configured_addr,
-                        idx,
-                    )?;
-
-                    let name_state = name::NameState::new(2);
-
-                    *state = SubdevInitState::DeviceProperties {
-                        identity: None,
-                        flags: None,
-                        alias_address: None,
-                        ports: None,
-                        identity_state,
-                        name_state,
-                        complete_access: false,
-                    };
-                }
-                SubdevInitState::DeviceProperties {
-                    identity,
-                    flags,
-                    alias_address,
-                    ports,
-                    identity_state,
-                    name_state,
-                    complete_access,
-                } => {
-                    if !matches!(header.command_code, 4 | 5) {
-                        unreachable!("{}", header.command_code)
+                    } else {
                     }
 
                     // only care about upper 16 bits as thats what stores the register
@@ -358,6 +396,17 @@ impl SubdevState {
                                 status.link_port1,
                                 status.link_port2,
                             ));
+
+                            identity_state.start(
+                                maindevice,
+                                retry_count,
+                                timeout,
+                                tx_entries,
+                                sock,
+                                ring,
+                                *configured_addr,
+                                idx,
+                            )?;
                         }
                         0x0502 | 0x0508 => match identifier {
                             Some(1) => {
@@ -447,6 +496,7 @@ enum SubdevInitState {
     ClearEeprom,
     SetEeprom,
     DeviceProperties {
+        prep_state: PrepDeviceProperties,
         identity: Option<ethercrab::SubDeviceIdentity>,
         flags: Option<ethercrab::SupportFlags>,
         alias_address: Option<u16>,

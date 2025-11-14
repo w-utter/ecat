@@ -10,7 +10,14 @@ use crate::mbx::MbxWriteRead;
 
 pub struct SdoRead<T> {
     inner: MbxWriteRead<ethercrab::coe::services::SdoNormal>,
+    finished: bool,
     ty: core::marker::PhantomData<T>,
+}
+
+impl <T> SdoRead<T> {
+    pub fn finished(&self) -> bool {
+        self.finished
+    }
 }
 
 impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
@@ -20,6 +27,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
 
         Self {
             inner,
+            finished: false,
             ty: core::marker::PhantomData,
         }
     }
@@ -105,6 +113,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
             };
 
             let data = T::unpack_from_slice(payload)?;
+            self.finished = true;
             return Ok(Some(data));
         }
         Ok(None)
@@ -163,11 +172,6 @@ impl<T: ethercrab::EtherCrabWireWrite + std::fmt::Debug> SdoWrite<T> {
         }
 
         let subindex = subindex.into();
-
-        println!(
-            "writing data to {:02x} s {:?}: {:02x?}",
-            index, subindex, data
-        );
 
         let mut buf = [0u8; 4];
         data.pack_to_slice(&mut buf).unwrap();
@@ -255,7 +259,6 @@ impl<T: ethercrab::EtherCrabWireWrite + std::fmt::Debug> SdoWrite<T> {
             identifier,
             idx,
         )? {
-            println!("\nsdo write header: {header:?}");
             return Ok(Some((header, bytes)));
         }
         Ok(None)

@@ -18,7 +18,7 @@ use heapless::Deque;
 // configures the mailboxes on all of the ecat slaves to later setup fmmus and sync managers
 pub struct MailboxConfig<const N: usize> {
     subdevices: Deque<(SubDevice, MailboxConfigState), N>,
-    transition_count: u16,
+    transition_idx: u16,
 }
 
 impl<const N: usize> MailboxConfig<N> {
@@ -32,24 +32,28 @@ impl<const N: usize> MailboxConfig<N> {
         ring: &mut IoUring,
     ) -> Result<Self, Error> {
         let mut devs = heapless::Deque::new();
-        for (id, subdev) in subdevs.into_iter().enumerate() {
-            let mut state = MailboxConfigState::new();
-            state.start(
-                maindevice,
-                retry_count,
-                timeout_duration,
-                tx_entries,
-                sock,
-                ring,
-                subdev.configured_address(),
-                id as u16,
-            )?;
+
+        for subdev in subdevs.into_iter() {
+            let state = MailboxConfigState::new();
             let _ = devs.push_back((subdev, state));
         }
 
+        let (subdev, state) = devs.front_mut().unwrap();
+
+        state.start(
+            maindevice,
+            retry_count,
+            timeout_duration,
+            tx_entries,
+            sock,
+            ring,
+            subdev.configured_address(),
+            0,
+        )?;
+
         Ok(Self {
             subdevices: devs,
-            transition_count: 0,
+            transition_idx: 0,
         })
     }
 
@@ -84,10 +88,25 @@ impl<const N: usize> MailboxConfig<N> {
             dev,
             identifier,
         )? {
-            self.transition_count += 1;
-            if usize::from(self.transition_count) == self.subdevices.len() {
-                return Ok(Some(core::mem::take(&mut self.subdevices)));
+            self.transition_idx += 1;
+
+            if usize::from(self.transition_idx) != self.subdevices.len() {
+                let (subdev, state) = self.subdevices.get_mut(self.transition_idx as _).unwrap();
+
+                state.start(
+                    maindevice,
+                    retry_count,
+                    timeout_duration,
+                    tx_entries,
+                    sock,
+                    ring,
+                    subdev.configured_address(),
+                    self.transition_idx,
+                )?;
+
+                return Ok(None);
             }
+            return Ok(Some(core::mem::take(&mut self.subdevices)));
         }
         Ok(None)
     }
@@ -200,8 +219,6 @@ impl MailboxConfigState {
                     }
 
                     if !more {
-                        println!("managers: {collected:?}");
-
                         let mut mbx_config = RangeReader::new(
                             0x0018,
                             ethercrab::DefaultMailbox::PACKED_LEN as _,
@@ -220,7 +237,6 @@ impl MailboxConfigState {
                             idx,
                         )?;
 
-                        println!("\ngetting mbx config\n");
                         *self = Self::GetMailboxConfig(core::mem::take(collected), mbx_config);
                     }
                 }
@@ -254,7 +270,6 @@ impl MailboxConfigState {
                         idx,
                     )?;
 
-                    println!("\nconfiguring mailboxes\n");
                     *self = Self::ConfigureMailboxSms(mbx_cfg);
                 }
             }
@@ -282,8 +297,6 @@ impl MailboxConfigState {
                     subdev.config.mailbox.write = write_mbx;
 
                     subdev.config.mailbox.supported_protocols = cfg.default_mbx.supported_protocols;
-
-                    println!("\nsetting eeprom back to pdi\n");
 
                     let (frame, handle) = maindevice
                         .prep_set_eeprom(configured_addr, ethercrab::SiiOwner::Pdi)
@@ -344,8 +357,6 @@ impl MailboxConfigState {
                         ethercrab::SubIndex::Complete,
                     );
 
-                    println!("reading sync managers from coe");
-
                     sdo_read.start(
                         maindevice,
                         retry_count,
@@ -380,8 +391,6 @@ impl MailboxConfigState {
                     idx,
                 )? {
                     subdev.config.mailbox.coe_sync_manager_types = mgrs;
-
-                    println!("resetting eeprom back to master");
 
                     let (frame, handle) = maindevice
                         .prep_set_eeprom(configured_addr, ethercrab::SiiOwner::Master)
@@ -448,7 +457,6 @@ impl<const N: usize> SyncManagerMbxConfig<N> {
             use ethercrab::SyncManagerType;
             match sync_manager.usage_type() {
                 SyncManagerType::MailboxWrite => {
-                    println!("mbx write");
                     let ((frame, handle), _) = maindevice
                         .prep_write_sm_config(
                             configured_addr,
@@ -479,7 +487,6 @@ impl<const N: usize> SyncManagerMbxConfig<N> {
                     return Ok(false);
                 }
                 SyncManagerType::MailboxRead => {
-                    println!("mbx read");
                     let ((frame, handle), _) = maindevice
                         .prep_write_sm_config(
                             configured_addr,

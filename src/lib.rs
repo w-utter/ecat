@@ -14,14 +14,12 @@ mod safeop;
 mod sdo;
 pub mod setup;
 mod state;
-mod state_transition;
+pub mod state_transition;
 mod txbuf;
 pub mod user;
 
-//TODO: write example
-
+pub use op::DeviceResponse;
 pub use pdo::{PdoConfig, PdoMapping, PdoObject};
 pub use sdo::{SdoRead, SdoWrite};
 pub use state::InitState;
 pub use txbuf::{TxBuf, TxIndex};
-pub use op::DeviceResponse;

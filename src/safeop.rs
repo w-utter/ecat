@@ -11,7 +11,7 @@ use heapless::Deque;
 
 pub struct SafeOp<const N: usize, U> {
     subdevices: Deque<(U, Transition), N>,
-    transition_count: u16,
+    transition_idx: u16,
 }
 
 impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
@@ -24,13 +24,15 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
         sock: &RawSocketDesc,
         ring: &mut IoUring,
     ) -> Result<Self, Error> {
-        println!("\n\nmoving to op\n\n");
-
         let mut devs = Deque::new();
-        for (id, (subdev, _, _)) in subdevs.into_iter().enumerate() {
-            let mut state = Transition::new(ethercrab::SubDeviceState::Op);
+        for (subdev, _, _) in subdevs.into_iter() {
+            let state = Transition::new(ethercrab::SubDeviceState::Op);
+            let _ = devs.push_back((subdev, state));
+        }
 
-            state.start(
+        let (subdev, state) = devs.front_mut().unwrap();
+
+        state.start(
                 maindevice,
                 retry_count,
                 timeout_duration,
@@ -38,15 +40,12 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
                 sock,
                 ring,
                 subdev.subdevice().configured_address(),
-                id as u16,
-            )?;
-
-            let _ = devs.push_back((subdev, state));
-        }
+                0,
+        )?;
 
         Ok(Self {
             subdevices: devs,
-            transition_count: 0,
+            transition_idx: 0,
         })
     }
 
@@ -79,11 +78,28 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
             configured_addr,
             idx as _,
         )? {
-            self.transition_count += 1;
+            self.transition_idx += 1;
 
-            if usize::from(self.transition_count) == self.subdevices.len() {
-                return Ok(Some(core::mem::take(&mut self.subdevices)));
+
+            if usize::from(self.transition_idx) != self.subdevices.len() {
+                let (subdev, state) = self.subdevices.get_mut(self.transition_idx as _).unwrap();
+
+                state.start(
+                        maindevice,
+                        retry_count,
+                        timeout_duration,
+                        tx_entries,
+                        sock,
+                        ring,
+                        subdev.subdevice().configured_address(),
+                        self.transition_idx as _,
+                )?;
+
+
+
+                return Ok(None)
             }
+            return Ok(Some(core::mem::take(&mut self.subdevices)));
         }
         Ok(None)
     }

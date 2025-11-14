@@ -1,6 +1,7 @@
 #[non_exhaustive]
+#[derive(Clone, Copy)]
 pub enum ControlFlow {
-    Send,
+    Restart,
 }
 
 pub trait UserDevice {

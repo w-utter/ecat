@@ -12,3 +12,7 @@ io-uring-buf-ring = {git = "https://github.com/w-utter/io-uring-buf-ring"}
 libc = "0.2"
 
 heapless = "0.9"
+
+[dev-dependencies]
+thread-priority = "3.0"
+core_affinity = "0.8"

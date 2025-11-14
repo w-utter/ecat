@@ -18,7 +18,26 @@ use std::collections::BTreeMap;
 use ethercrab::MainDevice;
 use ethercrab::std::RawSocketDesc;
 
+fn setup_process_priority() -> Result<(), Box<dyn std::error::Error>> {
+    use thread_priority::*;
+    let this = std::thread::current();
+    this.set_priority_and_policy(
+        ThreadSchedulePolicy::Realtime(RealtimeThreadSchedulePolicy::Fifo),
+        ThreadPriority::Crossplatform(ThreadPriorityValue::try_from(49).unwrap()),
+    )?;
+
+    for core_id in core_affinity::get_core_ids().unwrap() {
+        if core_affinity::set_for_current(core_id) {
+            break;
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    setup_process_priority()?;
+
     let (_tx, mut rx, pdu_loop) = PDU_STORAGE.try_split().expect("cannot split pdu");
 
     let mut maindevice = MainDevice::new(
@@ -142,19 +161,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         res.identifier,
                         &mut pdi_offset,
                         |_maindev, subdev| (User::new(subdev), &config),
-                        |maindev,
-                         dev,
-                         received,
-                         entries,
-                         ring,
-                         index,
-                         identifier,
-                         output_buf| {
+                        |maindev, dev, received, entries, ring, index, identifier, output_buf| {
                             let flow = dev
                                 .update(
                                     received, maindev, retries, &timeout, entries, &sock, ring,
                                     index, identifier, output_buf,
-                                ).unwrap();
+                                )
+                                .unwrap();
 
                             Ok(flow)
                         },
@@ -260,7 +273,19 @@ impl User {
         identifier: Option<u8>,
         output_buf: &mut [u8],
     ) -> Result<Option<ControlFlow>, Error> {
-        self.state.update(received, maindevice, retry_count, timeout_duration, tx_entries, sock, ring, &mut self.device, idx, identifier, output_buf)
+        self.state.update(
+            received,
+            maindevice,
+            retry_count,
+            timeout_duration,
+            tx_entries,
+            sock,
+            ring,
+            &mut self.device,
+            idx,
+            identifier,
+            output_buf,
+        )
     }
 }
 
@@ -313,7 +338,7 @@ impl RecvObj {
     const ERR_MASK: u16 = 0x08;
 }
 
-#[derive(Copy, Clone, ethercrab_wire::EtherCrabWireWrite)]
+#[derive(Copy, Clone, Debug, ethercrab_wire::EtherCrabWireWrite)]
 #[wire(bytes = 8)]
 struct WriteObj {
     #[wire(bytes = 2)]
@@ -375,22 +400,24 @@ impl UserState {
                 println!("send: {output_buf:?}");
 
                 *self = Self::Test(0);
-                Ok(Some(ControlFlow::Send))
+                Ok(None)
             }
             Self::Test(step) => {
                 let Some(ecat::DeviceResponse::Pdi(recv_bytes)) = received else {
                     panic!("Received smth else");
                     return Ok(None);
                 };
-                
+
                 if *step < 10000 {
                     *step += 1;
                 }
 
                 use ethercrab::EtherCrabWireRead;
                 let recv = RecvObj::unpack_from_slice(recv_bytes).unwrap();
+                let status = recv.status;
 
                 if *step > 1500 && recv.status & RecvObj::ERR_MASK == RecvObj::ERR_MASK {
+
                     let mbx_count = subdev.mailbox_counter();
                     let mut read_err = SdoRead::new(mbx_count, 0x603F, 0);
 
@@ -412,18 +439,19 @@ impl UserState {
 
                     *self = Self::Error(read_err);
                     return Ok(None);
+                } else if *step > 3500 && status != 0x1637 {
+                    //*step = 0;
+                    return Ok(Some(ControlFlow::Restart));
                 }
 
-                println!("step {step} state: {:?}", recv);
-
                 let step = *step;
-                let (ctrl, mut velocity) = if step < 1000 {
+                let (ctrl, mut velocity) = if step < 500 {
                     (0x0080, 0)
                 } else if step < 1500 {
                     (0x0006, 0)
-                } else if step < 2000 {
-                    (0x0007, 0)
                 } else if step < 2500 {
+                    (0x0007, 0)
+                } else if step < 3500 {
                     (0x000F, 0)
                 } else {
                     (0x000F, -25000)
@@ -436,59 +464,83 @@ impl UserState {
                 use ethercrab::EtherCrabWireWrite;
                 let write_obj = WriteObj::new(ctrl, velocity, 9);
                 write_obj.pack_to_slice(output_buf).unwrap();
-
-                Ok(Some(ControlFlow::Send))
+                Ok(None)
             }
             Self::Error(err) => {
-                let Some(ecat::DeviceResponse::Pdu(received, header)) = received else {
+                let Some(response) = received else {
                     return Ok(None);
                 };
-                if let Some(err_code) = err.update(
-                    received,
-                    header,
-                    maindevice,
-                    retry_count,
-                    timeout_duration,
-                    tx_entries,
-                    sock,
-                    ring,
-                    &subdev.config.mailbox.write.unwrap(),
-                    &subdev.config.mailbox.read.unwrap(),
-                    subdev.configured_address(),
-                    identifier,
-                    idx,
-                )? {
-                    if matches!(err_code, 0 | 0x730F | 0xA000) {
-                        //TODO: if in 0xA000, request to move back to the state the motor is in
 
-                        println!("insignificant err, retry rx/tx");
-                        let mut buf = [0; 20];
+                use ecat::DeviceResponse;
+                match response {
+                    DeviceResponse::Pdi(bytes) => {
+                        use ethercrab::EtherCrabWireRead;
+                        let recv = RecvObj::unpack_from_slice(bytes).unwrap();
+                        println!("err state: {recv:?}");
+
                         use ethercrab::EtherCrabWireWrite;
-                        let write_obj = WriteObj::new(0x0080, 0, 9);
-                        write_obj.pack_to_slice(&mut buf[12..]).unwrap();
-
-                        println!("send: {buf:?}");
-
-                        // lmao no way thats all it is
-                        let (frame, handle) =
-                            unsafe { maindevice.prep_rx_tx(0, &buf).unwrap().unwrap() };
-                        ecat::setup::setup_write(
-                            frame,
-                            handle,
+                        let write_obj = WriteObj::new(1 << 7 | 1 << 8, 0, 0);
+                        println!("\nsending: {write_obj:?}");
+                        write_obj.pack_to_slice(output_buf).unwrap();
+                        if err.finished() {
+                            *self = Self::Test(0);
+                            return Ok(Some(ControlFlow::Restart));
+                        }
+                    }
+                    DeviceResponse::Pdu(received, header) => {
+                        if let Some(err_code) = err.update(
+                            received,
+                            header,
+                            maindevice,
                             retry_count,
                             timeout_duration,
                             tx_entries,
                             sock,
                             ring,
-                            Some(idx),
-                            None,
-                        )?;
+                            &subdev.config.mailbox.write.unwrap(),
+                            &subdev.config.mailbox.read.unwrap(),
+                            subdev.configured_address(),
+                            identifier,
+                            idx,
+                        )? {
 
-                        *self = Self::Test(0);
-                        return Ok(Some(ControlFlow::Send));
+
+
+
+                            /*
+                            if matches!(err_code, 0 | 0x730F | 0xA000) {
+                                //TODO: if in 0xA000, request to move back to the state the motor is in
+
+                                println!("insignificant err, retry rx/tx");
+                                let mut buf = [0; 20];
+                                use ethercrab::EtherCrabWireWrite;
+                                let write_obj = WriteObj::new(0x0080, 0, 9);
+                                write_obj.pack_to_slice(&mut buf[12..]).unwrap();
+
+                                println!("send: {buf:?}");
+
+                                // lmao no way thats all it is
+                                let (frame, handle) =
+                                    unsafe { maindevice.prep_rx_tx(0, &buf).unwrap().unwrap() };
+                                ecat::setup::setup_write(
+                                    frame,
+                                    handle,
+                                    retry_count,
+                                    timeout_duration,
+                                    tx_entries,
+                                    sock,
+                                    ring,
+                                    Some(idx),
+                                    None,
+                                )?;
+
+                                *self = Self::Test(0);
+                                return Ok(Some(ControlFlow::Send));
+                            }
+                            panic!("error with code 0x{:02x}", err_code);
+                            */
+                        }
                     }
-
-                    panic!("error with code 0x{:02x}", err_code);
                 }
                 Ok(None)
             }

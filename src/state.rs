@@ -12,8 +12,6 @@ pub enum InitState<'a, const MAX_SUBDEVICES: usize, const I: usize, const O: usi
 
     //TODO: all of the earlier stuff (resetting, configuration, etc) needs to be done in
     //series.
-
-
     Reset(crate::reset::Reset),
     Init(crate::init::Init<MAX_SUBDEVICES>),
     Dc(crate::dc::Dc<MAX_SUBDEVICES>),
@@ -98,7 +96,16 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
     ) -> Result<(), Error> {
         match self {
             Self::Reset(r) => {
-                if let Some(count) = r.update(received, header) {
+                if let Some(count) = r.update(
+                    received,
+                    header,
+                    maindevice,
+                    retry_count,
+                    timeout,
+                    tx_entries,
+                    sock,
+                    ring,
+                )? {
                     let init = crate::init::Init::start_new(
                         count,
                         maindevice,
@@ -255,20 +262,15 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                 )? {
                     use crate::user::ControlFlow;
                     match flow {
-                        ControlFlow::Send => {
-                            let (frame, handle) =
-                                unsafe { maindevice.prep_rx_tx(0, &io.send_bytes) }?.unwrap();
-
-                            crate::setup::setup_write(
-                                frame,
-                                handle,
+                        ControlFlow::Restart => {
+                            *self = Self::Idle;
+                            self.start(
+                                maindevice,
                                 retry_count,
                                 timeout,
                                 tx_entries,
                                 sock,
                                 ring,
-                                index,
-                                identifier,
                             )?;
                         }
                     }

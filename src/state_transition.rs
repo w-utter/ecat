@@ -10,13 +10,13 @@ use std::collections::BTreeMap;
 
 // request transition from one state to another
 // eg, init -> preop
-pub(crate) struct Transition {
+pub struct Transition {
     requested: SubDeviceState,
     state: TransitionState,
 }
 
 impl Transition {
-    pub(crate) fn new(requested: SubDeviceState) -> Self {
+    pub fn new(requested: SubDeviceState) -> Self {
         Self {
             requested,
             state: TransitionState::Transition,
@@ -24,7 +24,7 @@ impl Transition {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn start(
+    pub fn start(
         &mut self,
         maindevice: &MainDevice,
         retry_count: usize,
@@ -54,7 +54,7 @@ impl Transition {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn update(
+    pub fn update(
         &mut self,
         received: ReceivedPdu<'_>,
         _header: PduHeader,
@@ -89,18 +89,12 @@ impl Transition {
                     Some(idx),
                     None,
                 )?;
-                println!("\nwaiting for {:?} to finish\n", self.requested);
                 self.state = TransitionState::WaitForAck;
             }
             TransitionState::WaitForAck => {
                 let res = AlControl::unpack_from_slice(&received).unwrap();
 
                 if res.state != self.requested {
-                    println!(
-                        "requested {:?} but still in state {:?}",
-                        self.requested, res.state
-                    );
-
                     let (frame, handle) = maindevice
                         .prep_wait_subdevice_state(configured_addr, self.requested)?
                         .unwrap();

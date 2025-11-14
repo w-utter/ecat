@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use crate::eeprom::category::CategoryIter;
 
 use crate::pdo::PdoConfig;
+use crate::preop::FmmuMapping as FmmuMappingOutput;
 
 #[allow(clippy::large_enum_variant)]
 pub enum ConfigureFmmus {
@@ -69,6 +70,49 @@ impl ConfigureFmmus {
         }
     }
 
+    pub(crate) fn start_output(&mut self,
+        maindevice: &MainDevice,
+        retry_count: usize,
+        timeout_duration: &Timespec,
+        tx_entries: &mut BTreeMap<u64, TxBuf>,
+        sock: &RawSocketDesc,
+        ring: &mut IoUring,
+        configured_addr: u16,
+        idx: u16,
+
+
+                               ) -> Result<(), Error> {
+        match self {
+            Self::Configure {
+                output_iter,
+                current_output,
+                ..
+            } => {
+                *current_output = output_iter
+                    .next()
+                    .map(|(sm_idx, mapping)| {
+                        ConfigureFmmu::start_new(
+                            sm_idx,
+                            mapping,
+                            ethercrab::SyncManagerType::ProcessDataWrite,
+                            maindevice,
+                            retry_count,
+                            timeout_duration,
+                            tx_entries,
+                            sock,
+                            ring,
+                            configured_addr,
+                            Some(2),
+                            idx,
+                        )
+                    })
+                    .transpose()?;
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn update<const I: usize, const O: usize>(
         &mut self,
@@ -86,7 +130,7 @@ impl ConfigureFmmus {
         identifier: Option<u8>,
         config: &PdoConfig<'_, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
-    ) -> Result<Option<(usize, usize)>, Error> {
+    ) -> Result<Option<FmmuMappingOutput<(usize, usize)>>, Error> {
         match self {
             Self::SyncManagers(managers, collected) => {
                 if let Some(more) = managers.update(
@@ -111,8 +155,6 @@ impl ConfigureFmmus {
                     }
 
                     if !more {
-                        println!("managers: {collected:?} (len: {})", collected.len());
-
                         let mut fmmus = CategoryIter::new(ethercrab::CategoryType::Fmmu, 0);
                         fmmus.start(
                             maindevice,
@@ -147,15 +189,12 @@ impl ConfigureFmmus {
                         use ethercrab::EtherCrabWireRead;
                         let fmmu = ethercrab::FmmuUsage::unpack_from_slice(buf).unwrap();
 
-                        println!("{fmmu:?}");
-
                         let _ = collected.push(fmmu);
                     } else {
                         panic!("could not find sync manager")
                     }
 
                     if !more {
-                        println!("sms: {:?},\n fmmus: {:?}", managers, collected);
                         let inputs = FmmuMapping::from_config(
                             config,
                             ethercrab::PdoDirection::MasterRead,
@@ -167,12 +206,6 @@ impl ConfigureFmmus {
                             ethercrab::PdoDirection::MasterWrite,
                             managers,
                             collected,
-                        );
-
-                        println!(
-                            "inputs (len {}): {inputs:?}, outputs (len {}): {outputs:?}",
-                            inputs.len(),
-                            outputs.len()
                         );
 
                         let mut input_iter = inputs.into_iter();
@@ -217,7 +250,6 @@ impl ConfigureFmmus {
                 input_len,
                 output_len,
             } => {
-                println!("id: {:?}", identifier);
                 match identifier.map(|id| (id >> 2) & 0b11) {
                     Some(1) => {
                         let input = current_input.as_mut().unwrap();
@@ -262,6 +294,7 @@ impl ConfigureFmmus {
                             // due to needing sequential access to the pdi
                             if current_input.is_none() {
                                 *input_len = Some(pdi_offset.start_address as _);
+                                /*
                                 *current_output = output_iter
                                     .next()
                                     .map(|(sm_idx, mapping)| {
@@ -281,14 +314,19 @@ impl ConfigureFmmus {
                                         )
                                     })
                                     .transpose()?;
+                                */
                             }
+                            return Ok(Some(FmmuMappingOutput::Input))
 
+                            /*
                             if current_input.is_none() && current_output.is_none() {
-                                return Ok(Some((
+                                return Ok(Some(FmmuMappingOutput::Output((
                                     input_len.unwrap_or_default(),
                                     output_len.unwrap_or_default(),
-                                )));
+                                ))));
+                            } else {
                             }
+                            */
                         }
                     }
                     Some(2) => {
@@ -335,10 +373,10 @@ impl ConfigureFmmus {
                             }
 
                             if current_input.is_none() && current_output.is_none() {
-                                return Ok(Some((
+                                return Ok(Some(FmmuMappingOutput::Output((
                                     input_len.unwrap_or_default(),
                                     output_len.unwrap_or_default(),
-                                )));
+                                ))));
                             }
                         }
                     }
@@ -449,11 +487,6 @@ impl ConfigureFmmu {
         identifier: Option<u8>,
         idx: u16,
     ) -> Result<Self, Error> {
-        println!(
-            "sm config: {configured_addr} {sm_idx} {:?} {}, fmmu: {}",
-            mapping.sync_manager, mapping.length, mapping.fmmu_index
-        );
-
         let ((frame, handle), config) = maindevice
             .prep_write_sm_config(
                 configured_addr,
@@ -475,7 +508,6 @@ impl ConfigureFmmu {
             Some(1 | (identifier.unwrap_or(0) << 2)),
         )?;
 
-        println!("starting fmmu\n");
         let mut fmmu = FmmuConfig::new(mapping.fmmu_index, sm_type, &config);
         fmmu.start(
             maindevice,
@@ -659,9 +691,6 @@ impl FmmuConfig {
                     }
                 };
 
-                println!("fmmu: {fmmu:?}");
-
-                println!("Setting up writing fmmu\n");
                 let (frame, handle) = maindevice
                     .prep_write_fmmu(configured_addr, *fmmu_idx, fmmu)
                     .unwrap()
@@ -709,9 +738,9 @@ impl FmmuConfig {
             }
             Self::CheckFmmu(segment) => {
                 use ethercrab::EtherCrabWireRead;
-                let fmmu = ethercrab::Fmmu::unpack_from_slice(&received).unwrap();
+                let _fmmu = ethercrab::Fmmu::unpack_from_slice(&received).unwrap();
 
-                println!("\n\nfmmu check: {fmmu:?}\n");
+
                 return Ok(Some(segment.clone()));
             }
         }

@@ -1,21 +1,23 @@
 use crate::setup::setup_write;
 use crate::txbuf::TxBuf;
 use ethercrab::{
-    MainDevice, PduHeader, error::Error, received_frame::ReceivedPdu, std::RawSocketDesc,
+    MainDevice, PduHeader, PrepResetDevices, ResetDevices, error::Error,
+    received_frame::ReceivedPdu, std::RawSocketDesc,
 };
 use io_uring::{IoUring, types::Timespec};
 use std::collections::BTreeMap;
 
 pub struct Reset {
+    state: PrepResetDevices,
     device_count: Option<u16>,
-    reset_count: u8,
+    //reset_count: u8,
 }
 
 impl Reset {
     pub(crate) fn new() -> Self {
         Self {
             device_count: None,
-            reset_count: 0,
+            state: PrepResetDevices::default(),
         }
     }
 
@@ -40,8 +42,27 @@ impl Reset {
             None,
             None,
         )?;
+        Ok(())
+    }
 
-        maindevice.prep_reset_subdevices(|res| {
+    pub(crate) fn update(
+        &mut self,
+        received: ReceivedPdu<'_>,
+        header: PduHeader,
+        maindevice: &MainDevice,
+        retry_count: usize,
+        timeout: &Timespec,
+        tx_entries: &mut BTreeMap<u64, TxBuf>,
+        sock: &RawSocketDesc,
+        ring: &mut IoUring,
+    ) -> Result<Option<u16>, ethercrab::error::Error> {
+        match header.command_code {
+            7 => self.device_count = Some(received.working_counter),
+            8 => (),
+            _ => return Ok(None),
+        }
+
+        if let Some(res) = ResetDevices::iter(maindevice, &mut self.state) {
             let (frame, handle) = res.unwrap().unwrap();
             setup_write(
                 frame,
@@ -54,25 +75,9 @@ impl Reset {
                 None,
                 None,
             )?;
-            Ok(())
-        })?;
-
-        Ok(())
-    }
-
-    const MAX_CLEARS: u8 = 44;
-
-    pub(crate) fn update(&mut self, received: ReceivedPdu<'_>, header: PduHeader) -> Option<u16> {
-        match header.command_code {
-            7 => self.device_count = Some(received.working_counter),
-            8 => self.reset_count += 1,
-            _ => unreachable!(),
+            Ok(None)
+        } else {
+            Ok(self.device_count)
         }
-
-        if self.reset_count < Self::MAX_CLEARS {
-            return None;
-        }
-
-        self.device_count
     }
 }

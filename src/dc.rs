@@ -38,6 +38,7 @@ impl<const N: usize> Dc<N> {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
         &mut self,
         maindevice: &MainDevice,
@@ -46,6 +47,7 @@ impl<const N: usize> Dc<N> {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice.prep_latch_receive_times().unwrap().unwrap();
 
@@ -59,6 +61,7 @@ impl<const N: usize> Dc<N> {
             ring,
             None,
             None,
+            write_entry,
         )?;
         Ok(())
     }
@@ -75,6 +78,7 @@ impl<const N: usize> Dc<N> {
         sock: &RawSocketDesc,
         ring: &mut io_uring::IoUring,
         idx: Option<u16>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<Deque<SubDevice, N>>, Error> {
         match &mut self.state {
             DcState::LatchReceive => {
@@ -96,6 +100,7 @@ impl<const N: usize> Dc<N> {
                             ring,
                             Some(id),
                             None,
+                            &write_entry,
                         )?;
                         Ok(())
                     })
@@ -157,6 +162,7 @@ impl<const N: usize> Dc<N> {
                                 ring,
                                 Some(id),
                                 None,
+                                &write_entry,
                             )?;
                             Ok(())
                         },
@@ -207,6 +213,7 @@ impl<const N: usize> Dc<N> {
                         ring,
                         None,
                         None,
+                        &write_entry,
                     )?;
 
                     let remaining_iterations = maindevice.config.dc_static_sync_iterations;
@@ -240,6 +247,7 @@ impl<const N: usize> Dc<N> {
                         ring,
                         None,
                         None,
+                        &write_entry,
                     )?;
                 } else {
                     return Ok(Some(core::mem::take(&mut self.subdevices)));

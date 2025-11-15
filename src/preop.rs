@@ -32,6 +32,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
         sock: &RawSocketDesc,
         ring: &mut IoUring,
         mut config: impl FnMut(&MainDevice, ethercrab::SubDevice) -> (U, &'a PdoConfig<'a, I, O>),
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut devs = Deque::new();
 
@@ -56,6 +57,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
             &subdev.config.mailbox.read.unwrap(),
             subdev.configured_address(),
             0,
+            write_entry,
         )?;
 
         Ok(Self {
@@ -79,6 +81,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
         identifier: Option<u8>,
         idx: Option<u16>,
         pdi_offset: &mut ethercrab::PdiOffset,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<
         Option<(
             Deque<(U, &'a PdoConfig<'a, I, O>, PreOpConfigState<'a>), N>,
@@ -107,15 +110,16 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
             identifier,
             cfg,
             pdi_offset,
+            &write_entry,
         )? {
-            let (configured_idx, start) = if usize::from(self.configured_input_idx) == self.subdevices.len() {
-                (&mut self.configured_output_idx, false)
-            } else {
-                (&mut self.configured_input_idx, true)
-            };
+            let (configured_idx, start) =
+                if usize::from(self.configured_input_idx) == self.subdevices.len() {
+                    (&mut self.configured_output_idx, false)
+                } else {
+                    (&mut self.configured_input_idx, true)
+                };
 
             *configured_idx += 1;
-
 
             if usize::from(*configured_idx) != self.subdevices.len() {
                 let (dev, _, state) = self.subdevices.get_mut(*configured_idx as _).unwrap();
@@ -133,6 +137,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         &subdev.config.mailbox.read.unwrap(),
                         subdev.configured_address(),
                         *configured_idx as _,
+                        &write_entry,
                     )?;
                 } else {
                     match state {
@@ -145,11 +150,12 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                             ring,
                             subdev.configured_address(),
                             *configured_idx as _,
+                            &write_entry,
                         )?,
                         _ => unreachable!(),
                     }
                 }
-                return Ok(None)
+                return Ok(None);
             } else if start {
                 let (dev, _, state) = self.subdevices.front_mut().unwrap();
                 let subdev = dev.subdevice_mut();
@@ -163,11 +169,12 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         ring,
                         subdev.configured_address(),
                         0,
+                        &write_entry,
                     )?,
                     _ => unreachable!(),
                 }
             } else if let FmmuMapping::Output(io) = mapping {
-                return Ok(Some((core::mem::take(&mut self.subdevices), io)))
+                return Ok(Some((core::mem::take(&mut self.subdevices), io)));
             }
         }
         Ok(None)
@@ -224,6 +231,7 @@ impl<'a> PreOpConfigState<'a> {
         read_mbx: &ethercrab::Mailbox,
         configured_addr: u16,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match self {
             Self::Pdos(pdos) => pdos.start(
@@ -238,6 +246,7 @@ impl<'a> PreOpConfigState<'a> {
                 configured_addr,
                 None,
                 idx,
+                write_entry,
             ),
             _ => unreachable!(),
         }
@@ -262,6 +271,7 @@ impl<'a> PreOpConfigState<'a> {
         identifier: Option<u8>,
         config: &'a PdoConfig<'a, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<FmmuMapping<SendRecvIo>>, Error> {
         match self {
             Self::Pdos(pdos) => {
@@ -281,6 +291,7 @@ impl<'a> PreOpConfigState<'a> {
                     idx,
                     subdev,
                     config,
+                    &write_entry,
                 )? {
                     let mut fmmus = ConfigureFmmus::new();
                     fmmus.start(
@@ -292,6 +303,7 @@ impl<'a> PreOpConfigState<'a> {
                         ring,
                         configured_addr,
                         idx,
+                        &write_entry,
                     );
 
                     *self = Self::Fmmus(fmmus);
@@ -313,6 +325,7 @@ impl<'a> PreOpConfigState<'a> {
                     identifier,
                     config,
                     pdi_offset,
+                    &write_entry,
                 )? {
                     let (input_len, output_len) = match res {
                         FmmuMapping::Input => return Ok(Some(FmmuMapping::Input)),
@@ -329,6 +342,7 @@ impl<'a> PreOpConfigState<'a> {
                         ring,
                         configured_addr,
                         idx,
+                        &write_entry,
                     )?;
                     *self = Self::SafeOpTransition(
                         state,
@@ -351,6 +365,7 @@ impl<'a> PreOpConfigState<'a> {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     return Ok(Some(FmmuMapping::Output(*io)));
                 }

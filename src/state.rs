@@ -53,6 +53,7 @@ impl<const N: usize, const I: usize, const O: usize, U> InitState<'_, N, I, O, U
 impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDevice>
     InitState<'a, N, I, O, U>
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn start(
         &mut self,
         maindevice: &MainDevice,
@@ -61,9 +62,18 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let mut reset = crate::reset::Reset::new();
-        reset.start(maindevice, retry_count, timeout, tx_entries, sock, ring)?;
+        reset.start(
+            maindevice,
+            retry_count,
+            timeout,
+            tx_entries,
+            sock,
+            ring,
+            write_entry,
+        )?;
         *self = Self::Reset(reset);
         Ok(())
     }
@@ -93,6 +103,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
             Option<u8>,
             &mut [u8],
         ) -> std::io::Result<Option<crate::user::ControlFlow>>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match self {
             Self::Reset(r) => {
@@ -105,6 +116,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     tx_entries,
                     sock,
                     ring,
+                    &write_entry,
                 )? {
                     let init = crate::init::Init::start_new(
                         count,
@@ -114,6 +126,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         tx_entries,
                         sock,
                         ring,
+                        &write_entry,
                     )?;
                     *self = Self::Init(init);
                 }
@@ -130,10 +143,19 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     ring,
                     index,
                     identifier,
+                    &write_entry,
                 )? {
                     let mut dc = crate::dc::Dc::new(devs);
 
-                    dc.start(maindevice, retry_count, timeout, tx_entries, sock, ring)?;
+                    dc.start(
+                        maindevice,
+                        retry_count,
+                        timeout,
+                        tx_entries,
+                        sock,
+                        ring,
+                        &write_entry,
+                    )?;
                     *self = Self::Dc(dc);
                 }
             }
@@ -148,6 +170,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     sock,
                     ring,
                     index,
+                    &write_entry,
                 )? {
                     let mbx_config = crate::mbx_config::MailboxConfig::start_new(
                         devs,
@@ -157,6 +180,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         tx_entries,
                         sock,
                         ring,
+                        &write_entry,
                     )?;
                     *self = Self::Mbx(mbx_config);
                 }
@@ -173,6 +197,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     ring,
                     identifier,
                     index,
+                    &write_entry,
                 )? {
                     let preop = crate::preop::PreOp::start_new(
                         devs,
@@ -183,6 +208,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         sock,
                         ring,
                         config,
+                        &write_entry,
                     )?;
 
                     *self = Self::PreOp(preop);
@@ -201,6 +227,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     identifier,
                     index,
                     pdi_offset,
+                    &write_entry,
                 )? {
                     let safeop = crate::safeop::SafeOp::start_new(
                         devs,
@@ -210,6 +237,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         tx_entries,
                         sock,
                         ring,
+                        &write_entry,
                     )?;
 
                     *self = Self::SafeOp(safeop, io);
@@ -226,6 +254,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     sock,
                     ring,
                     index,
+                    &write_entry,
                 )? {
                     let mut io: SendCtx = (*io).into();
 
@@ -239,6 +268,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         retry_count,
                         timeout,
                         sock,
+                        &write_entry,
                     )?;
 
                     *self = Self::Op(op, io);
@@ -259,6 +289,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                     retry_count,
                     timeout,
                     sock,
+                    &write_entry,
                 )? {
                     use crate::user::ControlFlow;
                     match flow {
@@ -271,6 +302,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                                 tx_entries,
                                 sock,
                                 ring,
+                                &write_entry,
                             )?;
                         }
                     }

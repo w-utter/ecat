@@ -46,6 +46,7 @@ impl<'a> PdoMappingConfig<'a> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match &mut self.state {
             PdoConfigState::Sdo { input, output } => {
@@ -62,6 +63,7 @@ impl<'a> PdoMappingConfig<'a> {
                         configured_addr,
                         Some(1 | (identifier.unwrap_or(0) << 2)),
                         idx,
+                        &write_entry,
                     )?;
                 }
 
@@ -78,6 +80,7 @@ impl<'a> PdoMappingConfig<'a> {
                         configured_addr,
                         Some(2 | (identifier.unwrap_or(0) << 2)),
                         idx,
+                        &write_entry,
                     )?;
                 }
             }
@@ -104,6 +107,7 @@ impl<'a> PdoMappingConfig<'a> {
         idx: u16,
         subdev: &SubDevice,
         config: &'a PdoConfig<'a, I, O>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         // this is a mess.
         match &mut self.state {
@@ -124,6 +128,7 @@ impl<'a> PdoMappingConfig<'a> {
                                 configured_addr,
                                 Some(1),
                                 idx,
+                                &write_entry,
                             )?;
                             Some((PdoMapState::Clear(write), 0))
                         } else {
@@ -155,6 +160,7 @@ impl<'a> PdoMappingConfig<'a> {
                             identifier,
                             idx,
                             subdev,
+                            &write_entry,
                         )? {
                             *input_idx += 1;
 
@@ -173,6 +179,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     Some(1),
                                     idx,
+                                    &write_entry,
                                 )?;
 
                                 *uinput = map;
@@ -199,6 +206,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(2),
                                             idx,
+                                            &write_entry,
                                         )?;
                                     }
                                     None => {
@@ -225,6 +233,7 @@ impl<'a> PdoMappingConfig<'a> {
                             identifier,
                             idx,
                             subdev,
+                            &write_entry,
                         )? {
                             *output_idx += 1;
 
@@ -243,6 +252,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     Some(2),
                                     idx,
+                                    &write_entry,
                                 )?;
 
                                 *uoutput = map;
@@ -279,6 +289,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     identifier,
                                     idx,
+                                    &write_entry,
                                 )?
                                 .is_some()
                                 {
@@ -296,6 +307,7 @@ impl<'a> PdoMappingConfig<'a> {
                                         configured_addr,
                                         Some(1),
                                         idx,
+                                        &write_entry,
                                     )?;
 
                                     *uinput = PdoMapState::Map(s, 0);
@@ -316,6 +328,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     identifier,
                                     idx,
+                                    &write_entry,
                                 )?
                                 .is_some()
                                 {
@@ -339,6 +352,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(1),
                                             idx,
+                                            &write_entry,
                                         )?;
                                         *w = s;
                                     } else {
@@ -361,6 +375,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(1),
                                             idx,
+                                            &write_entry,
                                         )?;
 
                                         *uinput = PdoMapState::SetCount(s);
@@ -382,6 +397,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     identifier,
                                     idx,
+                                    &write_entry,
                                 )?
                                 .is_some()
                                 {
@@ -401,6 +417,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(1),
                                             idx,
+                                            &write_entry,
                                         )?;
 
                                         *uinput = PdoMapState::Clear(write);
@@ -414,8 +431,7 @@ impl<'a> PdoMappingConfig<'a> {
                                                 0,
                                                 0,
                                             );
-                                            // NOTE: same as before, to do sequentially as parallel
-                                            // didnt work
+
                                             write.start(
                                                 maindevice,
                                                 retry_count,
@@ -428,6 +444,7 @@ impl<'a> PdoMappingConfig<'a> {
                                                 configured_addr,
                                                 Some(2),
                                                 idx,
+                                                &write_entry,
                                             )?;
                                             Some((PdoMapState::Clear(write), 0))
                                         } else {
@@ -461,6 +478,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     identifier,
                                     idx,
+                                    &write_entry,
                                 )?
                                 .is_some()
                                 {
@@ -483,6 +501,7 @@ impl<'a> PdoMappingConfig<'a> {
                                         configured_addr,
                                         Some(2),
                                         idx,
+                                        &write_entry,
                                     )?;
 
                                     *uoutput = PdoMapState::Map(s, 0);
@@ -503,6 +522,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     identifier,
                                     idx,
+                                    &write_entry,
                                 )?
                                 .is_some()
                                 {
@@ -529,6 +549,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(2),
                                             idx,
+                                            &write_entry,
                                         )?;
                                         *w = s;
                                     } else {
@@ -551,6 +572,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(2),
                                             idx,
+                                            &write_entry,
                                         )?;
 
                                         *uoutput = PdoMapState::SetCount(s);
@@ -572,6 +594,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     configured_addr,
                                     identifier,
                                     idx,
+                                    &write_entry,
                                 )?
                                 .is_some()
                                 {
@@ -595,6 +618,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             configured_addr,
                                             Some(2),
                                             idx,
+                                            &write_entry,
                                         )?;
 
                                         *uoutput = PdoMapState::Clear(write);
@@ -657,6 +681,7 @@ impl<'a> PdoMap<'a> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match &mut self.state {
             PdoMapState::Clear(c) => c.start(
@@ -671,6 +696,7 @@ impl<'a> PdoMap<'a> {
                 configured_addr,
                 identifier,
                 idx,
+                write_entry,
             ),
             _ => unreachable!(),
         }
@@ -693,6 +719,7 @@ impl<'a> PdoMap<'a> {
         identifier: Option<u8>,
         idx: u16,
         subdev: &SubDevice,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match &mut self.state {
             PdoMapState::Clear(c) => {
@@ -710,6 +737,7 @@ impl<'a> PdoMap<'a> {
                     configured_addr,
                     identifier,
                     idx,
+                    &write_entry,
                 )?
                 .is_some()
                 {
@@ -727,6 +755,7 @@ impl<'a> PdoMap<'a> {
                             configured_addr,
                             identifier.map(|id| id >> 2),
                             idx,
+                            &write_entry,
                         )?;
                         self.state = PdoMapState::Map(s, 0);
                     } else {
@@ -749,6 +778,7 @@ impl<'a> PdoMap<'a> {
                     configured_addr,
                     identifier,
                     idx,
+                    &write_entry,
                 )?
                 .is_some()
                 {
@@ -767,6 +797,7 @@ impl<'a> PdoMap<'a> {
                             configured_addr,
                             identifier.map(|id| id >> 2),
                             idx,
+                            &write_entry,
                         )?;
                         *s = new_s;
                     } else {
@@ -784,6 +815,7 @@ impl<'a> PdoMap<'a> {
                             configured_addr,
                             identifier.map(|id| id >> 2),
                             idx,
+                            &write_entry,
                         )?;
 
                         self.state = PdoMapState::SetCount(s);
@@ -805,6 +837,7 @@ impl<'a> PdoMap<'a> {
                     configured_addr,
                     identifier,
                     idx,
+                    &write_entry,
                 )?
                 .is_some()
                 {

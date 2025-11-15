@@ -30,6 +30,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
         retry_count: usize,
         timeout: &io_uring::types::Timespec,
         sock: &ethercrab::std::RawSocketDesc,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
         for (id, (mut subdev, _)) in subdevs.into_iter().enumerate() {
@@ -62,6 +63,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
             ring,
             Some(0),
             None,
+            write_entry,
         )?;
 
         Ok(Self { subdevices })
@@ -92,12 +94,13 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
         retry_count: usize,
         timeout: &io_uring::types::Timespec,
         sock: &ethercrab::std::RawSocketDesc,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<crate::user::ControlFlow>, Error> {
         let idx = idx.unwrap() as usize;
 
         if header.command_code == 12 {
             let received_bytes = &received[..];
-            (&mut transmission_buf[..received.len()]).copy_from_slice(received_bytes);
+            (transmission_buf[..received.len()]).copy_from_slice(received_bytes);
 
             let (input_buf, output_buf) = transmission_buf.split_at_mut(input_end);
 
@@ -117,21 +120,22 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                     continue;
                 };
 
-                match (ctrl_flow, user_cb(
-                    maindevice,
-                    subdev,
-                    Some(DeviceResponse::Pdi(user_input_buf)),
-                    tx_entries,
-                    ring,
-                    id as _,
-                    None,
-                    user_output_buf,
-                )
-                .map_err(|_| Error::Internal)?) {
-                    (None, Some(f)) => ctrl_flow = Some(f),
-                    _ => (),
+                if let (None, Some(f)) = (
+                    ctrl_flow,
+                    user_cb(
+                        maindevice,
+                        subdev,
+                        Some(DeviceResponse::Pdi(user_input_buf)),
+                        tx_entries,
+                        ring,
+                        id as _,
+                        None,
+                        user_output_buf,
+                    )
+                    .map_err(|_| Error::Internal)?,
+                ) {
+                    ctrl_flow = Some(f);
                 }
-
             }
 
             let (frame, handle) = unsafe { maindevice.prep_rx_tx(0, transmission_buf) }?.unwrap();
@@ -146,6 +150,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                 ring,
                 Some(0),
                 None,
+                write_entry,
             )?;
 
             Ok(ctrl_flow)

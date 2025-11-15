@@ -34,6 +34,7 @@ impl Transition {
         ring: &mut IoUring,
         configured_addr: u16,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice
             .prep_request_subdevice_state(configured_addr, self.requested)?
@@ -49,6 +50,7 @@ impl Transition {
             ring,
             Some(idx),
             None,
+            write_entry,
         )?;
         Ok(())
     }
@@ -66,6 +68,7 @@ impl Transition {
         ring: &mut IoUring,
         configured_addr: u16,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match &mut self.state {
             TransitionState::Transition => {
@@ -88,6 +91,7 @@ impl Transition {
                     ring,
                     Some(idx),
                     None,
+                    write_entry,
                 )?;
                 self.state = TransitionState::WaitForAck;
             }
@@ -109,6 +113,7 @@ impl Transition {
                         ring,
                         Some(idx),
                         None,
+                        write_entry,
                     )?;
                     return Ok(false);
                 }

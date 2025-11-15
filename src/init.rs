@@ -18,6 +18,7 @@ pub struct Init<const N: usize> {
 }
 
 impl<const N: usize> Init<N> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_new(
         subdev_count: u16,
         maindevice: &MainDevice,
@@ -26,6 +27,7 @@ impl<const N: usize> Init<N> {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
 
@@ -44,6 +46,7 @@ impl<const N: usize> Init<N> {
             ring,
             Some(id),
             None,
+            write_entry,
         )?;
 
         let _ = subdevices.push_back(SubdevState::new(addr));
@@ -65,6 +68,7 @@ impl<const N: usize> Init<N> {
         ring: &mut io_uring::IoUring,
         idx: Option<u16>,
         identifier: Option<u8>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<Deque<ethercrab::SubDevice, N>>, Error> {
         match &mut self.state {
             InitState::ConfigureAddresses(addr_state) => {
@@ -85,6 +89,7 @@ impl<const N: usize> Init<N> {
                         ring,
                         Some(id),
                         None,
+                        &write_entry,
                     )?;
 
                     let _ = self.subdevices.push_back(SubdevState::new(addr));
@@ -105,6 +110,7 @@ impl<const N: usize> Init<N> {
                     ring,
                     None,
                     None,
+                    &write_entry,
                 )?;
 
                 self.state = InitState::SyncInit;
@@ -134,6 +140,7 @@ impl<const N: usize> Init<N> {
                     sock,
                     ring,
                     0,
+                    &write_entry,
                 )?;
 
                 self.state = InitState::ConfigureSubdevices(0);
@@ -157,6 +164,7 @@ impl<const N: usize> Init<N> {
                     ring,
                     id,
                     identifier,
+                    &write_entry,
                 )? {
                     return Ok(None);
                 }
@@ -177,6 +185,7 @@ impl<const N: usize> Init<N> {
                         sock,
                         ring,
                         *configured_idx,
+                        &write_entry,
                     )?;
                     return Ok(None);
                 }
@@ -231,6 +240,7 @@ impl SubdevState {
         sock: &RawSocketDesc,
         ring: &mut io_uring::IoUring,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let configured_addr = match self {
             Self::Initializing {
@@ -253,6 +263,7 @@ impl SubdevState {
             ring,
             Some(idx),
             None,
+            write_entry,
         )
     }
 
@@ -269,6 +280,7 @@ impl SubdevState {
         ring: &mut io_uring::IoUring,
         idx: u16,
         identifier: Option<u8>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match self {
             Self::Initializing {
@@ -294,6 +306,7 @@ impl SubdevState {
                         ring,
                         Some(idx),
                         None,
+                        write_entry,
                     )?;
 
                     *state = SubdevInitState::SetEeprom;
@@ -320,6 +333,7 @@ impl SubdevState {
                         ring,
                         Some(idx),
                         None,
+                        write_entry,
                     )?;
 
                     let identity_state = RangeReader::new(
@@ -368,8 +382,8 @@ impl SubdevState {
                             ring,
                             Some(idx),
                             None,
+                            &write_entry,
                         )?;
-                    } else {
                     }
 
                     // only care about upper 16 bits as thats what stores the register
@@ -406,6 +420,7 @@ impl SubdevState {
                                 ring,
                                 *configured_addr,
                                 idx,
+                                &write_entry,
                             )?;
                         }
                         0x0502 | 0x0508 => match identifier {
@@ -421,6 +436,7 @@ impl SubdevState {
                                     ring,
                                     *configured_addr,
                                     idx,
+                                    &write_entry,
                                 )? {
                                     *identity =
                                         Some(ethercrab::SubDeviceIdentity::unpack_from_slice(
@@ -435,6 +451,7 @@ impl SubdevState {
                                         ring,
                                         *configured_addr,
                                         idx,
+                                        &write_entry,
                                     )?;
                                 }
                             }
@@ -451,6 +468,7 @@ impl SubdevState {
                                     *configured_addr,
                                     idx,
                                     complete_access,
+                                    &write_entry,
                                 )? {
                                     todo!()
                                 }
@@ -537,6 +555,7 @@ mod name {
             ring: &mut io_uring::IoUring,
             configured_addr: u16,
             idx: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<(), Error> {
             match self {
                 Self::FindingCategory(state) => state.start(
@@ -548,6 +567,7 @@ mod name {
                     ring,
                     configured_addr,
                     idx,
+                    write_entry,
                 ),
                 _ => unreachable!(),
             }
@@ -567,6 +587,7 @@ mod name {
             configured_addr: u16,
             index: u16,
             complete_access: &mut bool,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<bool, Error> {
             use ethercrab::EtherCrabWireRead;
             match self {
@@ -582,6 +603,7 @@ mod name {
                         ring,
                         configured_addr,
                         index,
+                        &write_entry,
                     )? {
                         match core::mem::take(&mut cat.found) {
                             None => *self = Self::Name(None),
@@ -602,6 +624,7 @@ mod name {
                                     ring,
                                     configured_addr,
                                     index,
+                                    &write_entry,
                                 )?;
 
                                 *self = Self::ReadingCategory(reader)
@@ -621,6 +644,7 @@ mod name {
                         ring,
                         configured_addr,
                         index,
+                        &write_entry,
                     )? {
                         let general_info =
                             ethercrab::SiiGeneral::unpack_from_slice(&cat.buffer).unwrap();
@@ -638,6 +662,7 @@ mod name {
                             ring,
                             configured_addr,
                             index,
+                            &write_entry,
                         )?;
 
                         *self = Self::FindingStrings(reader, general_info.name_string_idx);
@@ -655,6 +680,7 @@ mod name {
                         ring,
                         configured_addr,
                         index,
+                        &write_entry,
                     )? {
                         match core::mem::take(&mut cat.found) {
                             None => *self = Self::Name(None),
@@ -670,6 +696,7 @@ mod name {
                                     ring,
                                     configured_addr,
                                     index,
+                                    &write_entry,
                                 )?;
 
                                 *self = Self::ReadingStrings(reader);
@@ -689,6 +716,7 @@ mod name {
                         ring,
                         configured_addr,
                         index,
+                        &write_entry,
                     )? {
                         match core::mem::take(&mut strings.found) {
                             None => *self = Self::Name(None),
@@ -708,6 +736,7 @@ mod name {
                                     ring,
                                     configured_addr,
                                     index,
+                                    &write_entry,
                                 )?;
 
                                 *self = Self::ReadingName(reader);
@@ -727,6 +756,7 @@ mod name {
                         ring,
                         configured_addr,
                         index,
+                        &write_entry,
                     )? {
                         let mut buf = [0; N];
                         core::mem::swap(&mut name.buffer, &mut buf);

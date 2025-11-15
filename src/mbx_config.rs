@@ -22,6 +22,7 @@ pub struct MailboxConfig<const N: usize> {
 }
 
 impl<const N: usize> MailboxConfig<N> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start_new(
         subdevs: Deque<SubDevice, N>,
         maindevice: &MainDevice,
@@ -30,6 +31,7 @@ impl<const N: usize> MailboxConfig<N> {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut devs = heapless::Deque::new();
 
@@ -49,6 +51,7 @@ impl<const N: usize> MailboxConfig<N> {
             ring,
             subdev.configured_address(),
             0,
+            write_entry,
         )?;
 
         Ok(Self {
@@ -70,6 +73,7 @@ impl<const N: usize> MailboxConfig<N> {
         ring: &mut IoUring,
         identifier: Option<u8>,
         idx: Option<u16>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<Deque<(SubDevice, MailboxConfigState), N>>, Error> {
         let idx = idx.unwrap() as usize;
         let (dev, state) = self.subdevices.get_mut(idx).unwrap();
@@ -87,6 +91,7 @@ impl<const N: usize> MailboxConfig<N> {
             idx as u16,
             dev,
             identifier,
+            &write_entry,
         )? {
             self.transition_idx += 1;
 
@@ -102,6 +107,7 @@ impl<const N: usize> MailboxConfig<N> {
                     ring,
                     subdev.configured_address(),
                     self.transition_idx,
+                    &write_entry,
                 )?;
 
                 return Ok(None);
@@ -145,6 +151,7 @@ impl MailboxConfigState {
         ring: &mut IoUring,
         configured_addr: u16,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice
             .prep_set_eeprom(configured_addr, ethercrab::SiiOwner::Master)
@@ -161,6 +168,7 @@ impl MailboxConfigState {
             ring,
             Some(idx),
             None,
+            write_entry,
         )
     }
 
@@ -179,6 +187,7 @@ impl MailboxConfigState {
         idx: u16,
         subdev: &mut ethercrab::SubDevice,
         identifier: Option<u8>,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match self {
             Self::SetEepromMaster => {
@@ -192,6 +201,7 @@ impl MailboxConfigState {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )?;
 
                 *self = Self::SyncManagers(state, Default::default());
@@ -208,6 +218,7 @@ impl MailboxConfigState {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     if let Some(buf) = managers.buffer() {
                         use ethercrab::EtherCrabWireRead;
@@ -235,6 +246,7 @@ impl MailboxConfigState {
                             ring,
                             configured_addr,
                             idx,
+                            &write_entry,
                         )?;
 
                         *self = Self::GetMailboxConfig(core::mem::take(collected), mbx_config);
@@ -253,6 +265,7 @@ impl MailboxConfigState {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     use ethercrab::EtherCrabWireRead;
                     let cfg = ethercrab::DefaultMailbox::unpack_from_slice(&config.buffer)?;
@@ -268,6 +281,7 @@ impl MailboxConfigState {
                         ring,
                         configured_addr,
                         idx,
+                        &write_entry,
                     )?;
 
                     *self = Self::ConfigureMailboxSms(mbx_cfg);
@@ -283,6 +297,7 @@ impl MailboxConfigState {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     let read_mbx = core::mem::take(&mut cfg.read_mbx);
                     let write_mbx = core::mem::take(&mut cfg.write_mbx);
@@ -313,6 +328,7 @@ impl MailboxConfigState {
                         ring,
                         Some(idx),
                         None,
+                        &write_entry,
                     )?;
 
                     *self = Self::SetEepromPdi;
@@ -329,6 +345,7 @@ impl MailboxConfigState {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )?;
                 *self = Self::PreOpTransition(state);
             }
@@ -344,6 +361,7 @@ impl MailboxConfigState {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     // onto setting up stuff for coe
                     if !subdev.config.mailbox.complete_access {
@@ -369,6 +387,7 @@ impl MailboxConfigState {
                         configured_addr,
                         identifier,
                         idx,
+                        &write_entry,
                     )?;
 
                     *self = Self::CoeSyncManagers(sdo_read);
@@ -389,6 +408,7 @@ impl MailboxConfigState {
                     configured_addr,
                     identifier,
                     idx,
+                    &write_entry,
                 )? {
                     subdev.config.mailbox.coe_sync_manager_types = mgrs;
 
@@ -407,6 +427,7 @@ impl MailboxConfigState {
                         ring,
                         Some(idx),
                         None,
+                        &write_entry,
                     )?;
 
                     *self = Self::ResetEepromMaster;
@@ -452,6 +473,7 @@ impl<const N: usize> SyncManagerMbxConfig<N> {
         ring: &mut IoUring,
         configured_addr: u16,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         for (sm_idx, sync_manager) in self.iter.by_ref() {
             use ethercrab::SyncManagerType;
@@ -477,6 +499,7 @@ impl<const N: usize> SyncManagerMbxConfig<N> {
                         ring,
                         Some(idx),
                         None,
+                        write_entry,
                     )?;
 
                     self.write_mbx = Some(ethercrab::Mailbox {
@@ -506,6 +529,7 @@ impl<const N: usize> SyncManagerMbxConfig<N> {
                         ring,
                         Some(idx),
                         None,
+                        write_entry,
                     )?;
 
                     self.read_mbx = Some(ethercrab::Mailbox {

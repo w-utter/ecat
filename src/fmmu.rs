@@ -52,6 +52,7 @@ impl ConfigureFmmus {
         ring: &mut IoUring,
         configured_addr: u16,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) {
         match self {
             Self::SyncManagers(s, _) => {
@@ -64,13 +65,16 @@ impl ConfigureFmmus {
                     ring,
                     configured_addr,
                     idx,
+                    write_entry,
                 );
             }
             _ => unreachable!(),
         }
     }
 
-    pub(crate) fn start_output(&mut self,
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn start_output(
+        &mut self,
         maindevice: &MainDevice,
         retry_count: usize,
         timeout_duration: &Timespec,
@@ -79,9 +83,8 @@ impl ConfigureFmmus {
         ring: &mut IoUring,
         configured_addr: u16,
         idx: u16,
-
-
-                               ) -> Result<(), Error> {
+        write_entry: impl Fn(u64) -> u64,
+    ) -> Result<(), Error> {
         match self {
             Self::Configure {
                 output_iter,
@@ -104,6 +107,7 @@ impl ConfigureFmmus {
                             configured_addr,
                             Some(2),
                             idx,
+                            write_entry,
                         )
                     })
                     .transpose()?;
@@ -130,6 +134,7 @@ impl ConfigureFmmus {
         identifier: Option<u8>,
         config: &PdoConfig<'_, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<FmmuMappingOutput<(usize, usize)>>, Error> {
         match self {
             Self::SyncManagers(managers, collected) => {
@@ -144,6 +149,7 @@ impl ConfigureFmmus {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     if let Some(buf) = managers.buffer() {
                         use ethercrab::EtherCrabWireRead;
@@ -165,6 +171,7 @@ impl ConfigureFmmus {
                             ring,
                             configured_addr,
                             idx,
+                            &write_entry,
                         )?;
 
                         *self =
@@ -184,6 +191,7 @@ impl ConfigureFmmus {
                     ring,
                     configured_addr,
                     idx,
+                    &write_entry,
                 )? {
                     if let Some(buf) = fmmus.buffer() {
                         use ethercrab::EtherCrabWireRead;
@@ -227,6 +235,7 @@ impl ConfigureFmmus {
                                     configured_addr,
                                     Some(1),
                                     idx,
+                                    &write_entry,
                                 )
                             })
                             .transpose()?;
@@ -269,6 +278,7 @@ impl ConfigureFmmus {
                             pdi_offset,
                             subdev,
                             ethercrab::PdoDirection::MasterRead,
+                            &write_entry,
                         )? {
                             *current_input = input_iter
                                 .next()
@@ -286,6 +296,7 @@ impl ConfigureFmmus {
                                         configured_addr,
                                         Some(1),
                                         idx,
+                                        &write_entry,
                                     )
                                 })
                                 .transpose()?;
@@ -316,7 +327,7 @@ impl ConfigureFmmus {
                                     .transpose()?;
                                 */
                             }
-                            return Ok(Some(FmmuMappingOutput::Input))
+                            return Ok(Some(FmmuMappingOutput::Input));
 
                             /*
                             if current_input.is_none() && current_output.is_none() {
@@ -347,6 +358,7 @@ impl ConfigureFmmus {
                             pdi_offset,
                             subdev,
                             ethercrab::PdoDirection::MasterWrite,
+                            &write_entry,
                         )? {
                             *current_output = output_iter
                                 .next()
@@ -364,6 +376,7 @@ impl ConfigureFmmus {
                                         configured_addr,
                                         Some(2),
                                         idx,
+                                        &write_entry,
                                     )
                                 })
                                 .transpose()?;
@@ -486,6 +499,7 @@ impl ConfigureFmmu {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let ((frame, handle), config) = maindevice
             .prep_write_sm_config(
@@ -506,6 +520,7 @@ impl ConfigureFmmu {
             ring,
             Some(idx),
             Some(1 | (identifier.unwrap_or(0) << 2)),
+            &write_entry,
         )?;
 
         let mut fmmu = FmmuConfig::new(mapping.fmmu_index, sm_type, &config);
@@ -519,6 +534,7 @@ impl ConfigureFmmu {
             configured_addr,
             Some(2 | (identifier.unwrap_or(0) << 2)),
             idx,
+            write_entry,
         )?;
 
         Ok(Self::from_fmmu(fmmu))
@@ -541,6 +557,7 @@ impl ConfigureFmmu {
         pdi_offset: &mut ethercrab::PdiOffset,
         subdev: &mut SubDevice,
         direction: ethercrab::PdoDirection,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         // first 2 bits to identify
         match identifier.map(|id| id & 0b11) {
@@ -564,6 +581,7 @@ impl ConfigureFmmu {
                     identifier,
                     idx,
                     pdi_offset,
+                    write_entry,
                 )? {
                     use ethercrab::PdoDirection;
                     match direction {
@@ -620,6 +638,7 @@ impl FmmuConfig {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match self {
             Self::ReadFmmu { fmmu_idx, .. } => {
@@ -638,6 +657,7 @@ impl FmmuConfig {
                     ring,
                     Some(idx),
                     identifier,
+                    write_entry,
                 )?;
             }
             _ => unreachable!(),
@@ -660,6 +680,7 @@ impl FmmuConfig {
         identifier: Option<u8>,
         idx: u16,
         pdi_offset: &mut ethercrab::PdiOffset,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ethercrab::PdiSegment>, Error> {
         match self {
             Self::ReadFmmu {
@@ -706,6 +727,7 @@ impl FmmuConfig {
                     ring,
                     Some(idx),
                     identifier,
+                    write_entry,
                 )?;
                 *self = Self::WriteConfig(fmmu, *sm_length_bytes, *fmmu_idx);
             }
@@ -732,6 +754,7 @@ impl FmmuConfig {
                     ring,
                     Some(idx),
                     identifier,
+                    write_entry,
                 )?;
 
                 *self = Self::CheckFmmu(segment);
@@ -739,7 +762,6 @@ impl FmmuConfig {
             Self::CheckFmmu(segment) => {
                 use ethercrab::EtherCrabWireRead;
                 let _fmmu = ethercrab::Fmmu::unpack_from_slice(&received).unwrap();
-
 
                 return Ok(Some(segment.clone()));
             }

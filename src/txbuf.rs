@@ -49,7 +49,12 @@ impl TxBuf<'_> {
         }
     }
 
-    pub fn update(&mut self, bytes: &[u8], sock: &RawSocketDesc) -> &squeue::Entry {
+    pub fn update(
+        &mut self,
+        bytes: &[u8],
+        sock: &RawSocketDesc,
+        write_entry: impl Fn(u64) -> u64,
+    ) -> &squeue::Entry {
         self.buf
             .get_mut(0..bytes.len())
             .unwrap()
@@ -59,7 +64,7 @@ impl TxBuf<'_> {
         self.stored_entry =
             opcode::Write::new(Fd(sock.as_raw_fd()), self.buf.as_ptr(), bytes.len() as _)
                 .build()
-                .user_data(self.idx() | crate::io::WRITE_MASK);
+                .user_data(write_entry(self.idx()));
 
         &self.stored_entry
     }

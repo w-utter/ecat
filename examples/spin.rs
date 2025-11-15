@@ -91,6 +91,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let timeout = Timespec::new().sec(1);
 
     let mut state = InitState::<16, _, _, _>::new();
+
+    let write_entry = |id| id | WRITE_MASK;
+
     state.start(
         &maindevice,
         retries,
@@ -98,6 +101,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &mut tx_bufs,
         &sock,
         &mut ring,
+        &write_entry,
     )?;
 
     let mut pdi_offset = ethercrab::PdiOffset::default();
@@ -164,13 +168,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         |maindev, dev, received, entries, ring, index, identifier, output_buf| {
                             let flow = dev
                                 .update(
-                                    received, maindev, retries, &timeout, entries, &sock, ring,
-                                    index, identifier, output_buf,
+                                    received,
+                                    maindev,
+                                    retries,
+                                    &timeout,
+                                    entries,
+                                    &sock,
+                                    ring,
+                                    index,
+                                    identifier,
+                                    output_buf,
+                                    &write_entry,
                                 )
                                 .unwrap();
 
                             Ok(flow)
                         },
+                        &write_entry,
                     );
                 } else {
                     println!("actually timed out");
@@ -272,6 +286,7 @@ impl User {
         idx: u16,
         identifier: Option<u8>,
         output_buf: &mut [u8],
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ControlFlow>, Error> {
         self.state.update(
             received,
@@ -285,6 +300,7 @@ impl User {
             idx,
             identifier,
             output_buf,
+            write_entry,
         )
     }
 }
@@ -389,6 +405,7 @@ impl UserState {
         idx: u16,
         identifier: Option<u8>,
         output_buf: &mut [u8],
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ControlFlow>, Error> {
         match self {
             Self::Idle => {
@@ -404,7 +421,6 @@ impl UserState {
             }
             Self::Test(step) => {
                 let Some(ecat::DeviceResponse::Pdi(recv_bytes)) = received else {
-                    panic!("Received smth else");
                     return Ok(None);
                 };
 
@@ -417,7 +433,6 @@ impl UserState {
                 let status = recv.status;
 
                 if *step > 1500 && recv.status & RecvObj::ERR_MASK == RecvObj::ERR_MASK {
-
                     let mbx_count = subdev.mailbox_counter();
                     let mut read_err = SdoRead::new(mbx_count, 0x603F, 0);
 
@@ -435,6 +450,7 @@ impl UserState {
                         configured_addr,
                         identifier,
                         idx,
+                        &write_entry,
                     )?;
 
                     *self = Self::Error(read_err);
@@ -488,7 +504,7 @@ impl UserState {
                         }
                     }
                     DeviceResponse::Pdu(received, header) => {
-                        if let Some(err_code) = err.update(
+                        if let Some(_err_code) = err.update(
                             received,
                             header,
                             maindevice,
@@ -502,10 +518,8 @@ impl UserState {
                             subdev.configured_address(),
                             identifier,
                             idx,
+                            &write_entry,
                         )? {
-
-
-
 
                             /*
                             if matches!(err_code, 0 | 0x730F | 0xA000) {

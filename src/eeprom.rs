@@ -37,6 +37,7 @@ pub(crate) mod read_state {
             start_addr: u16,
             idx: u16,
             identifier: u8,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<(), Error> {
             let (frame, handle) = maindevice
                 .prep_read_eeprom_chunk(configured_addr, start_addr)?
@@ -51,6 +52,7 @@ pub(crate) mod read_state {
                 ring,
                 Some(idx),
                 Some(identifier),
+                &write_entry,
             )?;
             *self = Self::RequestRead;
             Ok(())
@@ -70,6 +72,7 @@ pub(crate) mod read_state {
             configured_addr: u16,
             index: u16,
             identifier: u8,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<Option<ReceivedPdu<'p>>, Error> {
             match self {
                 Self::RequestRead => {
@@ -87,6 +90,7 @@ pub(crate) mod read_state {
                         ring,
                         Some(index),
                         Some(identifier),
+                        &write_entry,
                     )?;
                     *self = Self::WaitForDevice;
                 }
@@ -113,6 +117,7 @@ pub(crate) mod read_state {
                         ring,
                         Some(index),
                         Some(identifier),
+                        &write_entry,
                     )?;
                 }
                 Self::ReadData => return Ok(Some(received)),
@@ -156,6 +161,7 @@ pub mod range {
             ring: &mut IoUring,
             configured_addr: u16,
             idx: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<(), Error> {
             self.state.start(
                 maindevice,
@@ -168,6 +174,7 @@ pub mod range {
                 self.start + (self.offset / 2),
                 idx,
                 self.identifier,
+                &write_entry,
             )
         }
 
@@ -184,6 +191,7 @@ pub mod range {
             ring: &mut IoUring,
             configured_addr: u16,
             index: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<bool, Error> {
             if let Some(buf) = self.state.update(
                 received,
@@ -197,6 +205,7 @@ pub mod range {
                 configured_addr,
                 index,
                 self.identifier,
+                &write_entry,
             )? {
                 let bytes = &*buf;
 
@@ -227,6 +236,7 @@ pub mod range {
                     ring,
                     configured_addr,
                     index,
+                    &write_entry,
                 )?;
             }
             Ok(false)
@@ -269,6 +279,7 @@ pub mod category {
             ring: &mut IoUring,
             configured_addr: u16,
             idx: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<(), Error> {
             self.state.start(
                 maindevice,
@@ -281,6 +292,7 @@ pub mod category {
                 self.addr,
                 idx,
                 self.identifier,
+                &write_entry,
             )
         }
 
@@ -297,6 +309,7 @@ pub mod category {
             ring: &mut IoUring,
             configured_addr: u16,
             index: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<bool, Error> {
             if let Some(buf) = self.state.update(
                 received,
@@ -310,6 +323,7 @@ pub mod category {
                 configured_addr,
                 index,
                 self.identifier,
+                &write_entry,
             )? {
                 let bytes = &*buf;
 
@@ -371,6 +385,7 @@ pub mod category {
                     ring,
                     configured_addr,
                     index,
+                    &write_entry,
                 )?;
             }
             Ok(false)
@@ -398,6 +413,7 @@ pub mod category {
             ring: &mut IoUring,
             configured_addr: u16,
             idx: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<(), Error> {
             match self {
                 Self::Categories(cat) => cat.start(
@@ -409,6 +425,7 @@ pub mod category {
                     ring,
                     configured_addr,
                     idx,
+                    write_entry,
                 ),
                 _ => unreachable!(),
             }
@@ -429,6 +446,7 @@ pub mod category {
             ring: &mut IoUring,
             configured_addr: u16,
             idx: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<Option<bool>, Error> {
             match self {
                 Self::Categories(cat) => {
@@ -443,6 +461,7 @@ pub mod category {
                         ring,
                         configured_addr,
                         idx,
+                        &write_entry,
                     )? {
                         match core::mem::take(&mut cat.found) {
                             // could not find category :(
@@ -459,6 +478,7 @@ pub mod category {
                                     ring,
                                     configured_addr,
                                     idx,
+                                    &write_entry,
                                 )?;
                                 *self = Self::Category(reader, found);
                             }
@@ -477,6 +497,7 @@ pub mod category {
                         ring,
                         configured_addr,
                         idx,
+                        &write_entry,
                     )? {
                         if cat.start + (cat.offset / 2) >= found.start + (found.len / 2) {
                             return Ok(Some(false));
@@ -491,6 +512,7 @@ pub mod category {
                             ring,
                             configured_addr,
                             idx,
+                            &write_entry,
                         )?;
 
                         return Ok(Some(true));
@@ -545,6 +567,7 @@ pub mod string {
             ring: &mut IoUring,
             configured_addr: u16,
             idx: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<(), Error> {
             self.state.start(
                 maindevice,
@@ -557,6 +580,7 @@ pub mod string {
                 self.start + (self.offset / 2),
                 idx,
                 self.identifier,
+                write_entry,
             )
         }
 
@@ -573,6 +597,7 @@ pub mod string {
             ring: &mut IoUring,
             configured_addr: u16,
             index: u16,
+            write_entry: impl Fn(u64) -> u64,
         ) -> Result<bool, Error> {
             if let Some(buf) = self.state.update(
                 received,
@@ -586,6 +611,7 @@ pub mod string {
                 configured_addr,
                 index,
                 self.identifier,
+                &write_entry,
             )? {
                 let bytes = &*buf;
 
@@ -628,6 +654,7 @@ pub mod string {
                     ring,
                     configured_addr,
                     index,
+                    &write_entry,
                 )?;
             }
             Ok(false)

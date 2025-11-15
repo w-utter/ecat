@@ -14,7 +14,7 @@ pub struct SdoRead<T> {
     ty: core::marker::PhantomData<T>,
 }
 
-impl <T> SdoRead<T> {
+impl<T> SdoRead<T> {
     pub fn finished(&self) -> bool {
         self.finished
     }
@@ -46,6 +46,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         self.inner.start(
             maindevice,
@@ -59,6 +60,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
             configured_addr,
             identifier,
             idx,
+            write_entry,
         )
     }
 
@@ -78,6 +80,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<T>, Error> {
         if let Some((header, bytes)) = self.inner.update(
             received,
@@ -93,6 +96,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
             configured_addr,
             identifier,
             idx,
+            write_entry,
         )? {
             use ethercrab::EtherCrabWireRead;
             let payload = if header.sdo_header.expedited_transfer {
@@ -135,6 +139,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<(ethercrab::coe::services::SdoNormal, ReceivedPdu<'p>)>, Error> {
         self.inner.update(
             received,
@@ -150,6 +155,7 @@ impl<T: ethercrab::EtherCrabWireReadSized> SdoRead<T> {
             configured_addr,
             identifier,
             idx,
+            write_entry,
         )
     }
 }
@@ -205,6 +211,7 @@ impl<T: ethercrab::EtherCrabWireWrite + std::fmt::Debug> SdoWrite<T> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         self.inner.start(
             maindevice,
@@ -218,6 +225,7 @@ impl<T: ethercrab::EtherCrabWireWrite + std::fmt::Debug> SdoWrite<T> {
             configured_addr,
             identifier,
             idx,
+            write_entry,
         )
     }
 
@@ -237,6 +245,7 @@ impl<T: ethercrab::EtherCrabWireWrite + std::fmt::Debug> SdoWrite<T> {
         configured_addr: u16,
         identifier: Option<u8>,
         idx: u16,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<
         Option<(
             ethercrab::coe::services::SdoExpeditedDownload,
@@ -258,6 +267,7 @@ impl<T: ethercrab::EtherCrabWireWrite + std::fmt::Debug> SdoWrite<T> {
             configured_addr,
             identifier,
             idx,
+            write_entry,
         )? {
             return Ok(Some((header, bytes)));
         }

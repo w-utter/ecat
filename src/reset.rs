@@ -21,6 +21,7 @@ impl Reset {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn start(
         &mut self,
         maindevice: &MainDevice,
@@ -29,6 +30,7 @@ impl Reset {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice.prep_count_subdevices().unwrap().unwrap();
         setup_write(
@@ -41,10 +43,12 @@ impl Reset {
             ring,
             None,
             None,
+            write_entry,
         )?;
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn update(
         &mut self,
         received: ReceivedPdu<'_>,
@@ -55,6 +59,7 @@ impl Reset {
         tx_entries: &mut BTreeMap<u64, TxBuf>,
         sock: &RawSocketDesc,
         ring: &mut IoUring,
+        write_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<u16>, ethercrab::error::Error> {
         match header.command_code {
             7 => self.device_count = Some(received.working_counter),
@@ -74,6 +79,7 @@ impl Reset {
                 ring,
                 None,
                 None,
+                write_entry,
             )?;
             Ok(None)
         } else {

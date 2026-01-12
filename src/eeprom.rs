@@ -329,7 +329,6 @@ pub mod category {
 
                 if self.addr.checked_add(2).is_none() {
                     // could not find category or the end marker
-                    println!("could not find category or end marker");
                     self.found = None;
                     return Ok(true);
                 }
@@ -353,11 +352,8 @@ pub mod category {
 
                 if self.empty_category_count >= 32 {
                     // whole bunch of empty categories
-                    println!("could only find empty categories");
                     return Ok(true);
                 }
-
-                println!("ty: {category_type:?}");
 
                 match category_type {
                     cat if cat == self.category => {

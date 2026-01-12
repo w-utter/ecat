@@ -486,7 +486,6 @@ impl SubdevState {
                         Some(ports),
                     ) = (identity, name_state, flags, alias_address, ports)
                     {
-                        println!("name: {name:?}, \nidentity: {identity:?}");
                         let mut subdev = ethercrab::SubDevice::new_from_io_uring(
                             *configured_addr,
                             *alias,

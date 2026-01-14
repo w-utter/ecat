@@ -23,3 +23,5 @@ pub use pdo::{PdoConfig, PdoMapping, PdoObject};
 pub use sdo::{SdoRead, SdoWrite};
 pub use state::InitState;
 pub use txbuf::{TxBuf, TxIndex};
+
+pub use ethercrab;

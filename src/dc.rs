@@ -48,6 +48,7 @@ impl<const N: usize> Dc<N> {
         sock: &RawSocketDesc,
         ring: &mut IoUring,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice.prep_latch_receive_times().unwrap().unwrap();
 
@@ -62,6 +63,7 @@ impl<const N: usize> Dc<N> {
             None,
             None,
             write_entry,
+            timeout_entry,
         )?;
         Ok(())
     }
@@ -79,6 +81,7 @@ impl<const N: usize> Dc<N> {
         ring: &mut io_uring::IoUring,
         idx: Option<u16>,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<Deque<SubDevice, N>>, Error> {
         match &mut self.state {
             DcState::LatchReceive => {
@@ -101,6 +104,7 @@ impl<const N: usize> Dc<N> {
                             Some(id),
                             None,
                             &write_entry,
+                            &timeout_entry,
                         )?;
                         Ok(())
                     })
@@ -163,6 +167,7 @@ impl<const N: usize> Dc<N> {
                                 Some(id),
                                 None,
                                 &write_entry,
+                                &timeout_entry,
                             )?;
                             Ok(())
                         },
@@ -214,6 +219,7 @@ impl<const N: usize> Dc<N> {
                         None,
                         None,
                         &write_entry,
+                        &timeout_entry,
                     )?;
 
                     let remaining_iterations = maindevice.config.dc_static_sync_iterations;
@@ -248,6 +254,7 @@ impl<const N: usize> Dc<N> {
                         None,
                         None,
                         &write_entry,
+                        &timeout_entry,
                     )?;
                 } else {
                     return Ok(Some(core::mem::take(&mut self.subdevices)));

@@ -31,6 +31,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
         timeout: &io_uring::types::Timespec,
         sock: &ethercrab::std::RawSocketDesc,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut subdevices = Deque::new();
         for (id, (mut subdev, _)) in subdevs.into_iter().enumerate() {
@@ -64,6 +65,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
             Some(0),
             None,
             write_entry,
+            timeout_entry,
         )?;
 
         Ok(Self { subdevices })
@@ -95,6 +97,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
         timeout: &io_uring::types::Timespec,
         sock: &ethercrab::std::RawSocketDesc,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<crate::user::ControlFlow>, Error> {
         let idx = idx.unwrap() as usize;
 
@@ -151,6 +154,7 @@ impl<const N: usize, U: crate::user::UserDevice> Op<N, U> {
                 Some(0),
                 None,
                 write_entry,
+                timeout_entry,
             )?;
 
             Ok(ctrl_flow)

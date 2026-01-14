@@ -93,6 +93,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut state = InitState::<16, _, _, _>::new();
 
     let write_entry = |id| id | WRITE_MASK;
+    let timeout_entry = |id| id | TIMEOUT_MASK;
 
     state.start(
         &maindevice,
@@ -102,6 +103,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         &sock,
         &mut ring,
         &write_entry,
+        &timeout_entry,
     )?;
 
     let mut pdi_offset = ethercrab::PdiOffset::default();
@@ -179,12 +181,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                     identifier,
                                     output_buf,
                                     &write_entry,
+                                    &timeout_entry,
                                 )
                                 .unwrap();
 
                             Ok(flow)
                         },
                         &write_entry,
+                        &timeout_entry,
                     );
                 } else {
                     println!("actually timed out");
@@ -287,6 +291,7 @@ impl User {
         identifier: Option<u8>,
         output_buf: &mut [u8],
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ControlFlow>, Error> {
         self.state.update(
             received,
@@ -301,6 +306,7 @@ impl User {
             identifier,
             output_buf,
             write_entry,
+            timeout_entry,
         )
     }
 }
@@ -406,6 +412,7 @@ impl UserState {
         identifier: Option<u8>,
         output_buf: &mut [u8],
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ControlFlow>, Error> {
         match self {
             Self::Idle => {
@@ -451,6 +458,7 @@ impl UserState {
                         identifier,
                         idx,
                         &write_entry,
+                        &timeout_entry,
                     )?;
 
                     *self = Self::Error(read_err);
@@ -519,6 +527,7 @@ impl UserState {
                             identifier,
                             idx,
                             &write_entry,
+                            &timeout_entry,
                         )? {
 
                             /*

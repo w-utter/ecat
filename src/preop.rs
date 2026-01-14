@@ -33,6 +33,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
         ring: &mut IoUring,
         mut config: impl FnMut(&MainDevice, ethercrab::SubDevice) -> (U, &'a PdoConfig<'a, I, O>),
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut devs = Deque::new();
 
@@ -58,6 +59,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
             subdev.configured_address(),
             0,
             write_entry,
+            timeout_entry,
         )?;
 
         Ok(Self {
@@ -82,6 +84,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
         idx: Option<u16>,
         pdi_offset: &mut ethercrab::PdiOffset,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<
         Option<(
             Deque<(U, &'a PdoConfig<'a, I, O>, PreOpConfigState<'a>), N>,
@@ -111,6 +114,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
             cfg,
             pdi_offset,
             &write_entry,
+            &timeout_entry,
         )? {
             let (configured_idx, start) =
                 if usize::from(self.configured_input_idx) == self.subdevices.len() {
@@ -138,6 +142,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         subdev.configured_address(),
                         *configured_idx as _,
                         &write_entry,
+                        &timeout_entry,
                     )?;
                 } else {
                     match state {
@@ -151,6 +156,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                             subdev.configured_address(),
                             *configured_idx as _,
                             &write_entry,
+                            &timeout_entry,
                         )?,
                         _ => unreachable!(),
                     }
@@ -170,6 +176,7 @@ impl<'a, const N: usize, const I: usize, const O: usize, U: crate::user::UserDev
                         subdev.configured_address(),
                         0,
                         &write_entry,
+                        &timeout_entry,
                     )?,
                     _ => unreachable!(),
                 }
@@ -232,6 +239,7 @@ impl<'a> PreOpConfigState<'a> {
         configured_addr: u16,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match self {
             Self::Pdos(pdos) => pdos.start(
@@ -247,6 +255,7 @@ impl<'a> PreOpConfigState<'a> {
                 None,
                 idx,
                 write_entry,
+                timeout_entry,
             ),
             _ => unreachable!(),
         }
@@ -272,6 +281,7 @@ impl<'a> PreOpConfigState<'a> {
         config: &'a PdoConfig<'a, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<FmmuMapping<SendRecvIo>>, Error> {
         match self {
             Self::Pdos(pdos) => {
@@ -292,6 +302,7 @@ impl<'a> PreOpConfigState<'a> {
                     subdev,
                     config,
                     &write_entry,
+                    &timeout_entry,
                 )? {
                     let mut fmmus = ConfigureFmmus::new();
                     fmmus.start(
@@ -304,6 +315,7 @@ impl<'a> PreOpConfigState<'a> {
                         configured_addr,
                         idx,
                         &write_entry,
+                        &timeout_entry,
                     );
 
                     *self = Self::Fmmus(fmmus);
@@ -326,6 +338,7 @@ impl<'a> PreOpConfigState<'a> {
                     config,
                     pdi_offset,
                     &write_entry,
+                    &timeout_entry,
                 )? {
                     let (input_len, output_len) = match res {
                         FmmuMapping::Input => return Ok(Some(FmmuMapping::Input)),
@@ -343,6 +356,7 @@ impl<'a> PreOpConfigState<'a> {
                         configured_addr,
                         idx,
                         &write_entry,
+                        &timeout_entry,
                     )?;
                     *self = Self::SafeOpTransition(
                         state,
@@ -366,6 +380,7 @@ impl<'a> PreOpConfigState<'a> {
                     configured_addr,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )? {
                     return Ok(Some(FmmuMapping::Output(*io)));
                 }

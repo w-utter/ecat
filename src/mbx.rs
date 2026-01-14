@@ -35,6 +35,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match &mut self.state {
             MbxWriteReadState::MailboxFull(m) => m.start(
@@ -50,6 +51,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
                 identifier,
                 idx,
                 write_entry,
+                timeout_entry,
             ),
             _ => unreachable!(),
         }
@@ -72,6 +74,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<(R, ReceivedPdu<'p>)>, Error> {
         match &mut self.state {
             MbxWriteReadState::MailboxFull(m) => {
@@ -90,6 +93,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
                     identifier,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )? {
                     let mut read = CoeRead::new();
                     let mut write = CoeWrite::new();
@@ -107,6 +111,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
                         idx,
                         Some(1 | ((!0b11) & identifier.unwrap_or(0))),
                         &write_entry,
+                        &timeout_entry,
                     )?;
 
                     let bytes = self.req.pack();
@@ -124,6 +129,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
                         Some(2 | ((!0b11) & identifier.unwrap_or(0))),
                         bytes.as_ref(),
                         &write_entry,
+                        &timeout_entry,
                     )?;
 
                     self.state = MbxWriteReadState::WriteRead { read, write };
@@ -161,6 +167,7 @@ impl<R: ethercrab::coe::services::CoeServiceRequest> MbxWriteRead<R> {
                         identifier,
                         idx,
                         &write_entry,
+                        &timeout_entry,
                     )? {
                         let res = ethercrab::SubDevice::parse_coe_service_reponse(bytes, &self.req)
                             .unwrap();
@@ -210,6 +217,7 @@ impl CoeMailboxState {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         self.tx.start(
             maindevice,
@@ -223,6 +231,7 @@ impl CoeMailboxState {
             1 | (identifier.unwrap_or(0) << 2),
             idx,
             &write_entry,
+            &timeout_entry,
         )?;
         self.rx.start(
             maindevice,
@@ -236,6 +245,7 @@ impl CoeMailboxState {
             2 | (identifier.unwrap_or(0) << 2),
             idx,
             write_entry,
+            timeout_entry,
         )?;
         Ok(())
     }
@@ -257,6 +267,7 @@ impl CoeMailboxState {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         // get only the first 2 bits that are used in the read
         match identifier.map(|id| id & 0b11) {
@@ -275,6 +286,7 @@ impl CoeMailboxState {
                     1,
                     idx,
                     write_entry,
+                    timeout_entry,
                 )? && matches!(self.rx, ReadMbxState::Ready)
                 {
                     return Ok(true);
@@ -295,6 +307,7 @@ impl CoeMailboxState {
                     2,
                     idx,
                     write_entry,
+                    timeout_entry,
                 )? && matches!(self.tx, WriteMbxState::Ready)
                 {
                     return Ok(true);
@@ -332,6 +345,7 @@ impl CoeWrite {
         identifier: Option<u8>,
         bytes: &[u8],
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = unsafe {
             maindevice
@@ -351,6 +365,7 @@ impl CoeWrite {
             Some(idx),
             identifier,
             write_entry,
+            timeout_entry,
         )
     }
 
@@ -384,6 +399,7 @@ impl CoeRead {
         idx: u16,
         identifier: Option<u8>,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice
             .prep_mailbox_sync_manager_status(configured_addr, read_mbx.sync_manager)
@@ -400,6 +416,7 @@ impl CoeRead {
             Some(idx),
             identifier,
             write_entry,
+            timeout_entry,
         )
     }
 
@@ -419,6 +436,7 @@ impl CoeRead {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ReceivedPdu<'p>>, Error> {
         match self {
             Self::Empty => {
@@ -439,6 +457,7 @@ impl CoeRead {
                         idx,
                         identifier,
                         write_entry,
+                        timeout_entry,
                     )?;
                     return Ok(None);
                 }
@@ -460,6 +479,7 @@ impl CoeRead {
                     Some(idx),
                     identifier,
                     write_entry,
+                    timeout_entry,
                 )?;
 
                 *self = Self::Ready;
@@ -495,6 +515,7 @@ impl WriteMbxState {
         identifier: u8,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice
             .prep_mailbox_sync_manager_status(configured_addr, write_mbx.sync_manager)?
@@ -511,6 +532,7 @@ impl WriteMbxState {
             Some(idx),
             Some(identifier),
             write_entry,
+            timeout_entry,
         )
     }
 
@@ -530,6 +552,7 @@ impl WriteMbxState {
         identifier: u8,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match self {
             Self::Full => {
@@ -550,6 +573,7 @@ impl WriteMbxState {
                         identifier,
                         idx,
                         write_entry,
+                        timeout_entry,
                     )?;
                     Ok(false)
                 } else {
@@ -588,6 +612,7 @@ impl ReadMbxState {
         identifier: u8,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice
             .prep_mailbox_sync_manager_status(configured_addr, read_mbx.sync_manager)?
@@ -604,6 +629,7 @@ impl ReadMbxState {
             Some(idx),
             Some(identifier),
             write_entry,
+            timeout_entry,
         )
     }
 
@@ -623,6 +649,7 @@ impl ReadMbxState {
         identifier: u8,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match self {
             Self::Full => {
@@ -654,6 +681,7 @@ impl ReadMbxState {
                     Some(idx),
                     Some(identifier),
                     write_entry,
+                    timeout_entry,
                 )?;
                 *self = Self::Flush;
             }
@@ -670,6 +698,7 @@ impl ReadMbxState {
                     identifier,
                     idx,
                     write_entry,
+                    timeout_entry,
                 )?;
                 *self = Self::Full;
             }

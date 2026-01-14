@@ -35,6 +35,7 @@ impl Transition {
         configured_addr: u16,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         let (frame, handle) = maindevice
             .prep_request_subdevice_state(configured_addr, self.requested)?
@@ -51,6 +52,7 @@ impl Transition {
             Some(idx),
             None,
             write_entry,
+            timeout_entry,
         )?;
         Ok(())
     }
@@ -69,6 +71,7 @@ impl Transition {
         configured_addr: u16,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match &mut self.state {
             TransitionState::Transition => {
@@ -92,6 +95,7 @@ impl Transition {
                     Some(idx),
                     None,
                     write_entry,
+                    timeout_entry,
                 )?;
                 self.state = TransitionState::WaitForAck;
             }
@@ -114,6 +118,7 @@ impl Transition {
                         Some(idx),
                         None,
                         write_entry,
+                        timeout_entry,
                     )?;
                     return Ok(false);
                 }

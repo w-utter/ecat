@@ -25,6 +25,7 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
         sock: &RawSocketDesc,
         ring: &mut IoUring,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let mut devs = Deque::new();
         for (subdev, _, _) in subdevs.into_iter() {
@@ -44,6 +45,7 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
             subdev.subdevice().configured_address(),
             0,
             write_entry,
+            timeout_entry,
         )?;
 
         Ok(Self {
@@ -65,6 +67,7 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
         ring: &mut IoUring,
         idx: Option<u16>,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<Deque<(U, Transition), N>>, Error> {
         let idx = idx.unwrap() as usize;
         let (dev, state) = self.subdevices.get_mut(idx).unwrap();
@@ -82,6 +85,7 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
             configured_addr,
             idx as _,
             &write_entry,
+            &timeout_entry,
         )? {
             self.transition_idx += 1;
 
@@ -98,6 +102,7 @@ impl<const N: usize, U: crate::user::UserDevice> SafeOp<N, U> {
                     subdev.subdevice().configured_address(),
                     self.transition_idx as _,
                     &write_entry,
+                    &timeout_entry,
                 )?;
 
                 return Ok(None);

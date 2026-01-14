@@ -47,6 +47,7 @@ impl<'a> PdoMappingConfig<'a> {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match &mut self.state {
             PdoConfigState::Sdo { input, output } => {
@@ -64,6 +65,7 @@ impl<'a> PdoMappingConfig<'a> {
                         Some(1 | (identifier.unwrap_or(0) << 2)),
                         idx,
                         &write_entry,
+                        &timeout_entry,
                     )?;
                 }
 
@@ -81,6 +83,7 @@ impl<'a> PdoMappingConfig<'a> {
                         Some(2 | (identifier.unwrap_or(0) << 2)),
                         idx,
                         &write_entry,
+                        &timeout_entry,
                     )?;
                 }
             }
@@ -108,6 +111,7 @@ impl<'a> PdoMappingConfig<'a> {
         subdev: &SubDevice,
         config: &'a PdoConfig<'a, I, O>,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         // this is a mess.
         match &mut self.state {
@@ -129,6 +133,7 @@ impl<'a> PdoMappingConfig<'a> {
                                 Some(1),
                                 idx,
                                 &write_entry,
+                                &timeout_entry,
                             )?;
                             Some((PdoMapState::Clear(write), 0))
                         } else {
@@ -161,6 +166,7 @@ impl<'a> PdoMappingConfig<'a> {
                             idx,
                             subdev,
                             &write_entry,
+                            &timeout_entry,
                         )? {
                             *input_idx += 1;
 
@@ -180,6 +186,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     Some(1),
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?;
 
                                 *uinput = map;
@@ -207,6 +214,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(2),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
                                     }
                                     None => {
@@ -234,6 +242,7 @@ impl<'a> PdoMappingConfig<'a> {
                             idx,
                             subdev,
                             &write_entry,
+                            &timeout_entry,
                         )? {
                             *output_idx += 1;
 
@@ -253,6 +262,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     Some(2),
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?;
 
                                 *uoutput = map;
@@ -290,6 +300,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     identifier,
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?
                                 .is_some()
                                 {
@@ -308,6 +319,7 @@ impl<'a> PdoMappingConfig<'a> {
                                         Some(1),
                                         idx,
                                         &write_entry,
+                                        &timeout_entry,
                                     )?;
 
                                     *uinput = PdoMapState::Map(s, 0);
@@ -329,6 +341,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     identifier,
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?
                                 .is_some()
                                 {
@@ -353,6 +366,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(1),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
                                         *w = s;
                                     } else {
@@ -376,6 +390,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(1),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
 
                                         *uinput = PdoMapState::SetCount(s);
@@ -398,6 +413,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     identifier,
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?
                                 .is_some()
                                 {
@@ -418,6 +434,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(1),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
 
                                         *uinput = PdoMapState::Clear(write);
@@ -445,6 +462,7 @@ impl<'a> PdoMappingConfig<'a> {
                                                 Some(2),
                                                 idx,
                                                 &write_entry,
+                                                &timeout_entry,
                                             )?;
                                             Some((PdoMapState::Clear(write), 0))
                                         } else {
@@ -479,6 +497,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     identifier,
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?
                                 .is_some()
                                 {
@@ -502,6 +521,7 @@ impl<'a> PdoMappingConfig<'a> {
                                         Some(2),
                                         idx,
                                         &write_entry,
+                                        &timeout_entry,
                                     )?;
 
                                     *uoutput = PdoMapState::Map(s, 0);
@@ -523,6 +543,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     identifier,
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?
                                 .is_some()
                                 {
@@ -550,6 +571,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(2),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
                                         *w = s;
                                     } else {
@@ -573,6 +595,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(2),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
 
                                         *uoutput = PdoMapState::SetCount(s);
@@ -595,6 +618,7 @@ impl<'a> PdoMappingConfig<'a> {
                                     identifier,
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )?
                                 .is_some()
                                 {
@@ -619,6 +643,7 @@ impl<'a> PdoMappingConfig<'a> {
                                             Some(2),
                                             idx,
                                             &write_entry,
+                                            &timeout_entry,
                                         )?;
 
                                         *uoutput = PdoMapState::Clear(write);
@@ -682,6 +707,7 @@ impl<'a> PdoMap<'a> {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match &mut self.state {
             PdoMapState::Clear(c) => c.start(
@@ -697,6 +723,7 @@ impl<'a> PdoMap<'a> {
                 identifier,
                 idx,
                 write_entry,
+                timeout_entry,
             ),
             _ => unreachable!(),
         }
@@ -720,6 +747,7 @@ impl<'a> PdoMap<'a> {
         idx: u16,
         subdev: &SubDevice,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         match &mut self.state {
             PdoMapState::Clear(c) => {
@@ -738,6 +766,7 @@ impl<'a> PdoMap<'a> {
                     identifier,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )?
                 .is_some()
                 {
@@ -756,6 +785,7 @@ impl<'a> PdoMap<'a> {
                             identifier.map(|id| id >> 2),
                             idx,
                             &write_entry,
+                            &timeout_entry,
                         )?;
                         self.state = PdoMapState::Map(s, 0);
                     } else {
@@ -779,6 +809,7 @@ impl<'a> PdoMap<'a> {
                     identifier,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )?
                 .is_some()
                 {
@@ -798,6 +829,7 @@ impl<'a> PdoMap<'a> {
                             identifier.map(|id| id >> 2),
                             idx,
                             &write_entry,
+                            &timeout_entry,
                         )?;
                         *s = new_s;
                     } else {
@@ -816,6 +848,7 @@ impl<'a> PdoMap<'a> {
                             identifier.map(|id| id >> 2),
                             idx,
                             &write_entry,
+                            &timeout_entry,
                         )?;
 
                         self.state = PdoMapState::SetCount(s);
@@ -838,6 +871,7 @@ impl<'a> PdoMap<'a> {
                     identifier,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )?
                 .is_some()
                 {

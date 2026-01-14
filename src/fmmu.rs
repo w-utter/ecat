@@ -53,6 +53,7 @@ impl ConfigureFmmus {
         configured_addr: u16,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) {
         match self {
             Self::SyncManagers(s, _) => {
@@ -66,6 +67,7 @@ impl ConfigureFmmus {
                     configured_addr,
                     idx,
                     write_entry,
+                    timeout_entry,
                 );
             }
             _ => unreachable!(),
@@ -84,6 +86,7 @@ impl ConfigureFmmus {
         configured_addr: u16,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match self {
             Self::Configure {
@@ -108,6 +111,7 @@ impl ConfigureFmmus {
                             Some(2),
                             idx,
                             write_entry,
+                            timeout_entry,
                         )
                     })
                     .transpose()?;
@@ -135,6 +139,7 @@ impl ConfigureFmmus {
         config: &PdoConfig<'_, I, O>,
         pdi_offset: &mut ethercrab::PdiOffset,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<FmmuMappingOutput<(usize, usize)>>, Error> {
         match self {
             Self::SyncManagers(managers, collected) => {
@@ -150,6 +155,7 @@ impl ConfigureFmmus {
                     configured_addr,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )? {
                     if let Some(buf) = managers.buffer() {
                         use ethercrab::EtherCrabWireRead;
@@ -172,6 +178,7 @@ impl ConfigureFmmus {
                             configured_addr,
                             idx,
                             &write_entry,
+                            &timeout_entry,
                         )?;
 
                         *self =
@@ -192,6 +199,7 @@ impl ConfigureFmmus {
                     configured_addr,
                     idx,
                     &write_entry,
+                    &timeout_entry,
                 )? {
                     if let Some(buf) = fmmus.buffer() {
                         use ethercrab::EtherCrabWireRead;
@@ -236,6 +244,7 @@ impl ConfigureFmmus {
                                     Some(1),
                                     idx,
                                     &write_entry,
+                                    &timeout_entry,
                                 )
                             })
                             .transpose()?;
@@ -279,6 +288,7 @@ impl ConfigureFmmus {
                             subdev,
                             ethercrab::PdoDirection::MasterRead,
                             &write_entry,
+                            &timeout_entry,
                         )? {
                             *current_input = input_iter
                                 .next()
@@ -297,6 +307,7 @@ impl ConfigureFmmus {
                                         Some(1),
                                         idx,
                                         &write_entry,
+                                        &timeout_entry,
                                     )
                                 })
                                 .transpose()?;
@@ -359,6 +370,7 @@ impl ConfigureFmmus {
                             subdev,
                             ethercrab::PdoDirection::MasterWrite,
                             &write_entry,
+                            &timeout_entry,
                         )? {
                             *current_output = output_iter
                                 .next()
@@ -377,6 +389,7 @@ impl ConfigureFmmus {
                                         Some(2),
                                         idx,
                                         &write_entry,
+                                        &timeout_entry,
                                     )
                                 })
                                 .transpose()?;
@@ -500,6 +513,7 @@ impl ConfigureFmmu {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Self, Error> {
         let ((frame, handle), config) = maindevice
             .prep_write_sm_config(
@@ -521,6 +535,7 @@ impl ConfigureFmmu {
             Some(idx),
             Some(1 | (identifier.unwrap_or(0) << 2)),
             &write_entry,
+            &timeout_entry,
         )?;
 
         let mut fmmu = FmmuConfig::new(mapping.fmmu_index, sm_type, &config);
@@ -535,6 +550,7 @@ impl ConfigureFmmu {
             Some(2 | (identifier.unwrap_or(0) << 2)),
             idx,
             write_entry,
+            timeout_entry,
         )?;
 
         Ok(Self::from_fmmu(fmmu))
@@ -558,6 +574,7 @@ impl ConfigureFmmu {
         subdev: &mut SubDevice,
         direction: ethercrab::PdoDirection,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<bool, Error> {
         // first 2 bits to identify
         match identifier.map(|id| id & 0b11) {
@@ -582,6 +599,7 @@ impl ConfigureFmmu {
                     idx,
                     pdi_offset,
                     write_entry,
+                    timeout_entry,
                 )? {
                     use ethercrab::PdoDirection;
                     match direction {
@@ -639,6 +657,7 @@ impl FmmuConfig {
         identifier: Option<u8>,
         idx: u16,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<(), Error> {
         match self {
             Self::ReadFmmu { fmmu_idx, .. } => {
@@ -658,6 +677,7 @@ impl FmmuConfig {
                     Some(idx),
                     identifier,
                     write_entry,
+                    timeout_entry,
                 )?;
             }
             _ => unreachable!(),
@@ -681,6 +701,7 @@ impl FmmuConfig {
         idx: u16,
         pdi_offset: &mut ethercrab::PdiOffset,
         write_entry: impl Fn(u64) -> u64,
+        timeout_entry: impl Fn(u64) -> u64,
     ) -> Result<Option<ethercrab::PdiSegment>, Error> {
         match self {
             Self::ReadFmmu {
@@ -728,6 +749,7 @@ impl FmmuConfig {
                     Some(idx),
                     identifier,
                     write_entry,
+                    timeout_entry,
                 )?;
                 *self = Self::WriteConfig(fmmu, *sm_length_bytes, *fmmu_idx);
             }
@@ -755,6 +777,7 @@ impl FmmuConfig {
                     Some(idx),
                     identifier,
                     write_entry,
+                    timeout_entry,
                 )?;
 
                 *self = Self::CheckFmmu(segment);

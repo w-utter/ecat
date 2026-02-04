@@ -1,9 +1,11 @@
 use ethercrab::{PduHeader, PduResponseHandle, received_frame::ReceivedPdu, std::RawSocketDesc};
 use io_uring::{opcode, squeue, types::Fd};
 
+const ETH_FRAME_SIZE: usize = 1458;
+
 pub struct TxBuf<'sto> {
     pub stored_entry: squeue::Entry,
-    pub buf: [u8; 1024],
+    pub buf: smallvec::SmallVec<[u8; ETH_FRAME_SIZE]>,
     pub id: u64,
     pub retries_remaining: usize,
     pub received: Option<(PduHeader, ReceivedPdu<'sto>)>,
@@ -40,7 +42,7 @@ impl TxBuf<'_> {
         let id = idx.idx();
         Self {
             id,
-            buf: [0; 1024],
+            buf: smallvec::SmallVec::new(),
             stored_entry: unsafe { core::mem::zeroed() },
             retries_remaining: retries,
             received: None,
@@ -56,7 +58,7 @@ impl TxBuf<'_> {
         write_entry: impl Fn(u64) -> u64,
     ) -> &squeue::Entry {
         if bytes.len() > self.buf.len() {
-            panic!("buffer size not big enough, requested {} and have {}", bytes.len(), self.buf.len());
+            self.buf.resize(bytes.len(), 0);
         }
 
         self.buf

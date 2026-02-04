@@ -55,6 +55,10 @@ impl TxBuf<'_> {
         sock: &RawSocketDesc,
         write_entry: impl Fn(u64) -> u64,
     ) -> &squeue::Entry {
+        if bytes.len() > self.buf.len() {
+            panic!("buffer size not big enough, requested {} and have {}", bytes.len(), self.buf.len());
+        }
+
         self.buf
             .get_mut(0..bytes.len())
             .unwrap()
